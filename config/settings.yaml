@@ -1,0 +1,115 @@
+# ============================================
+# ADGS v3 种群与进化参数
+# ============================================
+
+population:
+  initial_size: 10        # 初始节点数
+  capacity: 50            # 承载量 K（种群稳定目标）
+  reproduction_rate: 5    # 每轮新对话固定繁衍数 R
+  whiteboard_ratio: 0.30  # 白板（无 skill 无记忆）占繁衍比例，其余为基因重组
+  recovery_coef: 0.5      # 淘汰回复系数：E = R + (n-K)*coef
+
+# 力量一：基础淘汰率（S 型生存压力）
+pressure:
+  tau: 8                  # S 型曲线陡峭度 τ
+
+# 力量二：种类竞争（拥挤度高斯核）
+crowding:
+  sigma: 0.15             # 高斯核带宽 σ
+  sim_threshold: 0.6      # 只计入相似度 > 阈值的邻居
+  penalty: 0.5            # 拥挤度影响系数（0.5=减半）：同时作用于
+                          #   ① 综合得分折算 S = score×(1−penalty×拥挤度)
+                          #   ② 淘汰乘子 (基础压力 + penalty×拥挤度)
+                          # penalty=0 完全忽略拥挤度（纯分数进化）
+
+# 力量三：个体能力（综合得分指数弱度，2026-08-28 重做）
+# 淘汰权重 = (基础压力 + 拥挤度) × 5^(−weight × 综合得分/10)
+#   综合得分 S = 任务得分 × (1 − 拥挤度)：得分越高、生态位越独特 → 淘汰概率越低。
+#   量化效果：综合得分每高 10 分，淘汰概率 ÷5（60 分 = 50 分的 1/5）。
+#   亲代选择同用综合得分（得分高、拥挤度低 → 更可能繁衍）。
+# weight=0 退化为旧行为（纯拥挤度）；=1 满强度（每 10 分 5 倍）。
+elimination:
+  score_weight: 1.0
+
+# 力量四：承载量随种群能力动态扩张（方案 A，2026-08-20）
+# 得分无上限（下限 0）后，种群平均分随训练累积上升 → 承载量 K 对数增长：
+#   K_eff = K_base × (1 + slope × ln(avg_score / K_base))，EMA 平滑防抖
+#   avg=50→K=50；avg=100→K≈85；avg=300→K≈140；渐近饱和（收益递减）
+# 新节点初始分 = 当前种群 score 的 newborn_score_percentile 百分位（动态）：
+#   新后代从种群偏上水平起步，不拖累平均分，也不会被秒淘汰。
+capacity_growth:
+  enabled: true
+  slope: 1.0            # 对数增长系数（0 = 关闭 A，K 恒等于 capacity）
+  max: 200              # 承载量硬上限（资源约束：每节点一个 hermes profile）
+  min: 50               # 下限 = 原 capacity
+  newborn_score_percentile: 0.60   # 新节点初始分百分位（0.6 = 第 60 百分位）
+
+# 任务路由
+router:
+  top_k: 5                # 适配相近短名单内取前 k
+  temperature: 0.3        # softmax 温度（低=偏向最优，高=探索）
+  # 先按当前任务适配筛选：没有匹配专长时优先通用节点，累计分不越级抢任务。
+  # score = fit^sim_weight × (0.5+0.5×success_rate)^score_weight × explore_boost
+  # 成功率影响有界；采样使用 softmax(log(score)/temperature)，不被绝对分数缩放冲淡。
+  sim_weight: 3.0
+  score_weight: 0.2
+  # PUCT 探索（2026-09-28 用户反馈：高分节点垄断任务→其他节点接不到任务、
+  # 成长不起来，大量节点形同虚设）。
+  # 最终得分 = 基础分 × (1 + min(beta, beta×√ln(1+节点数)/(1+tasks_done)))
+  #   - 乘性：只放大"沾边"节点（与任务完全无关的 base≈0 加了也垫底，专精仍优先）
+  #   - 随 1/(1+tasks_done) 衰减：节点每接一任务加成变小，逐渐靠真本事存活
+  #   - √ln(1+N) 随种群规模缓增：节点越多，冷启动机会越大
+  # explore_beta=0 关闭探索（回退纯利用，旧行为）
+  explore_beta: 0.15
+
+# 节点智能体
+agent:
+  correction_limit: 3     # 任务修正上限（kill+resume）
+  rework_limit: 3         # 验收返工上限（验收不通过时同 session 继续修正）
+  max_workers: 2          # 并行派发线程数（上限）
+  # vLLM 服务器并发上限：生效并行度 = min(max_workers, vllm_concurrency)。
+  # 服务器并发不足时排队是正常现象（LLM 请求在 vLLM 队列等待），不是错误——
+  # 把并行度对齐到服务器并发，让排队发生在 ADGS 派发层（等待无超时、不误杀），
+  # 而不是 vLLM 层（hermes 等响应时无输出，会被无活动超时误判卡死而 kill）。
+  # 服务器扩容后调大此值即可恢复更高并行。
+  vllm_concurrency: 3          # 生效并行度 = min(max_workers, 3) = 2
+  max_delegation_depth: 5 # 节点间递归委派最大深度（防无限拆分；到顶强制自己执行）
+  merged_brain: true        # 节点大脑合并（A2A）：worker(hermes) 直接承担拆分/委派决策，
+                             # 经 MCP 工具(list_nodes/delegate_to_node/wait_delegation)与其他节点协作；
+                             # 关闭时回退旧 AGENT.decide 决策路径
+
+# hermes 执行
+# 注意：大任务（长文生成/大批量文件）需要宽松超时，
+# hermes 在 LLM 生成长文本时可能长时间无 stdout 输出，容易被误判无活动。
+# 服务器并发不足时 LLM 请求会排队（正常现象），排队期间 hermes 同样无输出——
+# 超时值须覆盖「排队 + 生成」总时长，否则排队会被无活动超时误杀（实测 600s 误杀）。
+hermes:
+  worker_timeout: 3600        # 总墙钟超时(秒) 60分钟（覆盖排队+生成，原 1800）
+  inactivity_timeout: 1800    # 无活动超时(秒) 30分钟（原 600，排队等待 LLM 响应时无输出）
+  long_task_timeout: 7200     # 长任务超时(秒) 2小时（任务书含长文/大规模关键词时用）
+
+# 打分与进化学习
+scoring:
+  ema_alpha: 0.3          # success_rate 平滑系数：0.7*旧 + 0.3*本次
+  describe_max_len: 500   # 节点描述最大字符数（LLM 微调输出上限）
+  # 评分增量系数（2026-08-20）：节点智能体给 hermes 打分 -10~+10
+  # （自己判断验收 + 看 hermes 执行日志），乘以系数累加到旧分：
+  #   new_score = old_score + 打分 × delta_coef
+  #   +10 完美 → +2；-10 完全失败 → -2；0 → 不变。单轮波动 ±2（精细评分）。
+  delta_coef: 0.2
+
+# 上下文压缩（2026-08-30：改为配置预写，不再启动时自动探测）
+# 此前 probe_context=true 会对三个模型逐一发 ~4MB 探测请求（force 忽略缓存），
+# vLLM 不通时每次启动卡 ~6 分钟、DeepSeek 白烧 token。现直接使用预写值：
+#   ceo_ctx_window    = deepseek-v4-flash 实测值（data/context_cache.json）
+#   brain/worker_ctx  = qwen3.8-27b（vLLM 探测一直失败，保守取 32768；
+#                       若服务器实际支持更大可自行调大）
+compress:
+  ctx_window: 32768       # 回退默认
+  ceo_ctx_window: 1048576 # CEO 模型上下文上限（deepseek-v4-flash）
+  brain_ctx_window: 32768 # 节点智能体（qwen3.8-27b）
+  worker_ctx_window: 262144 # Hermes worker：当前 /v1/models 的 max_input_tokens 实测值
+  trigger_ratio: 0.67     # 超过 67% 触发压缩
+  budget_ratio: 0.25      # 压缩后保留 25% 预算
+  probe_context: false    # 不再自动探测；需要重测时手动跑
+                          #   .venv/Scripts/python.exe utils/context_probe.py

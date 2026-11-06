@@ -1,0 +1,12 @@
+# ADGS v3 依赖
+# 安装: pip install -r requirements.txt
+# openai 约束 <3：v3 为 2026 新大版本，tool_call 行为与已验证的 2.x 生产环境有差异
+openai>=1.0,<3
+pyyaml>=6.0
+numpy>=1.24
+sentence-transformers>=2.2
+flask>=3.0
+mcp==1.26.0
+uvicorn>=0.31,<1
+pywinpty>=2.0.15,<3; sys_platform == "win32"
+pywin32>=311; sys_platform == "win32"

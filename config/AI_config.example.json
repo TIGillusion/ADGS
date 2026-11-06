@@ -1,0 +1,19 @@
+{
+    "_说明": "复制本文件为 config/AI_config.json 并填入真实 key。真实文件已被 .gitignore 排除,严禁入库。",
+    "ceo": {
+        "url": "https://api.deepseek.com/v1",
+        "model": "deepseek-flash",
+        "key": "sk-填入你的DeepSeek-APIKey"
+    },
+    "brain": {
+        "url": "http://你的vLLM主机:9000/v1",
+        "model": "qwen3.8-27b",
+        "key": "sk-mykey"
+    },
+    "worker": {
+        "url": "http://你的vLLM主机:9000/v1",
+        "model": "qwen3.8-27b",
+        "key": "sk-mykey",
+        "context_length": 262144
+    }
+}

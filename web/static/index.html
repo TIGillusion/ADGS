@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 2026-08-30：空 favicon，消除浏览器默认 /favicon.ico 404（console 报错） -->
+<link rel="icon" href="data:,">
+<title>ADGS 智能体达尔文进化系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 左侧边栏 -->
+  <aside id="sidebar">
+    <div class="logo">
+      <div class="logo-mark">◆</div>
+      <div class="logo-text">ADGS<span>v3</span></div>
+    </div>
+    <div class="side-sec">
+      <div class="side-title">系统状态</div>
+      <div id="stat-pop" class="stat">种群 <b>-</b>/<b>-</b></div>
+      <div class="stat">CEO <b id="stat-ceo">-</b></div>
+      <div class="stat">节点 <b id="stat-brain">-</b></div>
+      <div class="stat">执行 <b id="stat-worker">-</b></div>
+      <div class="stat" id="stat-ws" title="">工作区 <b>-</b></div>
+      <div class="stat" id="stat-queue" title="任务队列（任务执行中发消息自动排队）">队列 <b>0</b></div>
+    </div>
+    <div id="divider-ss" class="divider divider-h" title="拖拽调整系统状态高度"></div>
+    <div class="side-sec">
+      <div class="side-title">图例</div>
+      <div class="legend"><span class="lg lg-ceo"></span> CEO</div>
+      <div class="legend"><span class="lg lg-task"></span> 任务</div>
+      <div class="legend"><span class="lg lg-node"></span> 节点</div>
+      <div class="legend"><span class="lg lg-clone"></span> 临时克隆</div>
+      <div class="legend"><span class="lg lg-run"></span> 执行中</div>
+      <div class="legend"><span class="lg lg-done"></span> 完成</div>
+      <div class="legend"><span class="lg lg-fail"></span> 失败</div>
+    </div>
+    <div id="divider-lg" class="divider divider-h" title="拖拽调整图例高度"></div>
+    <div class="side-sec grow">
+      <div class="side-title side-title-row">历史任务<span id="hist-new" title="新建对话（重置 CEO 上下文）">＋ 新对话</span></div>
+      <div id="hist-list"></div>
+    </div>
+    <div id="divider-side-sec" class="divider divider-h" title="拖拽调整历史任务 / 运行记录高度"></div>
+    <div class="side-sec side-sec-fixed" id="side-sec-fixed">
+      <div class="side-title">运行记录</div>
+      <div id="sys-log"></div>
+    </div>
+    <div class="side-foot">
+      <button id="btn-evolve" title="触发一轮繁衍+淘汰">进化一轮</button>
+      <button id="btn-nodes" title="查看/管理节点技能与描述">节点管理</button>
+      <button id="btn-collapse" title="折叠边栏">«</button>
+    </div>
+  </aside>
+  <div id="divider-side" class="divider divider-v" title="拖拽调整侧边栏宽度"></div>
+
+  <!-- 主区：欢迎界面 / 图谱 + 对话 -->
+  <main id="main">
+    <div id="welcome-wrap">
+      <div class="wl-inner">
+        <div class="wl-logo">🧬</div>
+        <h1 class="wl-title">ADGS · 任务进化系统</h1>
+        <p class="wl-sub">输入你的要求，AI 智能体群体自动拆分任务、并行执行、验收交付</p>
+        <div class="wl-input-row">
+          <textarea id="wl-input" rows="2"
+            placeholder="描述你的任务…（例如：帮我开发一个用户登录系统，包含注册、登录、个人中心）"></textarea>
+          <button id="wl-send">发 送</button>
+        </div>
+        <div class="wl-hint">或从左侧历史任务继续之前的对话 · 回车发送 · Shift+Enter 换行</div>
+      </div>
+    </div>
+    <div id="graph-wrap">
+      <div id="graph-bar">
+        <span id="graph-title">任务进化图谱</span>
+        <span id="graph-bar-right">
+          <button id="btn-theme" class="bar-btn" title="切换 白天/夜晚 模式">☀ 白天</button>
+          <span id="graph-status" class="dot-idle">空闲</span>
+          <button id="btn-tasks" class="bar-btn" title="任务总览：所有任务的图谱按任务分开排列，互不重叠">任务总览</button>
+          <button id="btn-layout" class="bar-btn" title="一键整理：以 CEO 为中心，节点按层级向四周生长发散，围着各自的上层节点">整理布局</button>
+        </span>
+      </div>
+      <canvas id="graph"></canvas>
+      <div id="graph-hint">点击节点查看智能体与 hermes 实时输出 · 拖动图谱空白处平移 · 滚轮缩放</div>
+    </div>
+    <div id="divider-gc" class="divider divider-h" title="拖拽调整图谱 / 对话高度"></div>
+    <div id="chat-wrap">
+      <div id="chat-head">
+        <span>对话</span>
+        <span id="chat-clear" title="清空对话">清空</span>
+      </div>
+      <div id="chat-log"></div>
+      <div id="chat-input-row">
+        <textarea id="chat-input" rows="2"
+          placeholder="输入任务描述，回车发送（Shift+Enter 换行）· /help 查看指令"></textarea>
+        <button id="chat-send">发 送</button>
+      </div>
+    </div>
+
+    <!-- 节点管理视图 -->
+    <div id="nodes-wrap" class="hidden">
+      <div id="nodes-head">
+        <span>节点管理 <b id="nodes-count"></b></span>
+        <input id="nodes-search" type="text" placeholder="搜索 id / 描述 / 技能…" spellcheck="false">
+        <span id="nodes-refresh" title="刷新列表">↻ 刷新</span>
+        <span id="nodes-back">← 返回图谱</span>
+      </div>
+      <div id="nodes-body">
+        <div id="nodes-list"></div>
+        <div id="divider-ne" class="divider divider-v hidden" title="拖拽调整节点列表 / 详情宽度"></div>
+        <div id="node-edit" class="hidden">
+          <div id="node-edit-head">
+            <span id="node-edit-title">节点详情</span>
+            <span id="node-edit-close" title="关闭">×</span>
+          </div>
+          <div id="node-edit-meta"></div>
+          <div class="edit-sec">
+            <div class="edit-sec-title">描述（可编辑，回车或点保存生效）</div>
+            <textarea id="node-edit-describe" rows="4" spellcheck="false"></textarea>
+            <button id="node-edit-save">保存描述</button>
+          </div>
+          <div id="divider-ne2" class="divider divider-h" title="拖拽调整描述 / 技能高度"></div>
+          <div class="edit-sec grow">
+            <div class="edit-sec-title">技能基因</div>
+            <div id="node-edit-skills"></div>
+            <div class="skill-install">
+              <select id="node-edit-skill-src"><option value="">选择其它节点技能…</option></select>
+              <button id="node-edit-skill-add">安装</button>
+            </div>
+          </div>
+          <div class="edit-sec danger">
+            <button id="node-edit-remove">移除节点（删除 profile + registry）</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 右侧节点详情 -->
+  <aside id="detail" class="hidden">
+    <div id="divider-detail" class="divider divider-v" title="拖拽调整详情宽度"></div>
+    <div id="detail-head">
+      <span id="detail-title">节点详情</span>
+      <span id="detail-open-edit" title="在节点管理中查看完整详情" class="hidden">📋 节点管理</span>
+      <span id="detail-close" title="关闭">×</span>
+    </div>
+    <div id="detail-meta"></div>
+    <!-- 任务详情（按节点类型显示不同标题与内容，2026-08-28） -->
+    <div id="detail-task" class="hidden">
+      <div class="detail-task-block">
+        <div id="detail-task-title" class="col-head">📋 任务目标（Goal）</div>
+        <div id="detail-task-goal" class="task-goal-body"></div>
+      </div>
+    </div>
+    <div id="divider-dt" class="divider divider-h hidden" title="拖拽调整任务书 / 输出区域高度"></div>
+    <div id="detail-cols">
+      <div class="detail-col">
+        <div class="col-head">🧠 智能体 Brain（决策 / 验收）</div>
+        <div id="detail-brain" class="col-body"></div>
+      </div>
+      <div id="divider-cols" class="divider divider-v" title="拖拽调整 Brain / hermes 列宽度"></div>
+      <div class="detail-col">
+        <div class="col-head">⚙️ hermes 执行器（实时输出）</div>
+        <div id="detail-hermes" class="col-body"></div>
+      </div>
+    </div>
+  </aside>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+WARNING  [bubus] ⚠️ EventBus_e554f355🟢(⏳ 0 | ▶️ 2 | ✅ 0 ➡️ 31 👂) handler browser_use.browser.watchdog_base.BrowserSession.on_BrowserStartEvent() has been running for >15s on event. Possible slow processing or deadlock.
+(handler could be trying to await its own result or could be blocked by another async task).
+browser_use.browser.watchdog_base.BrowserSession.on_BrowserStartEvent(?▶ BrowserStartEvent#ce2b 🏃)
+WARNING  [bubus] ⚠️ EventBus_e554f355🟢(⏳ 0 | ▶️ 2 | ✅ 0 ➡️ 31 👂) handler browser_use.browser.watchdog_base.LocalBrowserWatchdog.on_BrowserLaunchEvent() has been running for >15s on event. Possible slow processing or deadlock.
+(handler could be trying to await its own result or could be blocked by another async task).
+browser_use.browser.watchdog_base.LocalBrowserWatchdog.on_BrowserLaunchEvent(?▶ BrowserLaunchEvent#b3f5 🏃)
+WARNING  [bubus] ================================================================================
+WARNING  [bubus] ⏱️  TIMEOUT ERROR - Handling took more than 30.0s for EventBus_e554f355.browser_use.browser.watchdog_base.BrowserSession.on_BrowserStartEvent(?▶ BrowserStartEvent#ce2b ✅)
+WARNING  [bubus] ================================================================================
+WARNING  [bubus] 📣 BrowserStartEvent#ce2b                                              [91m30s[0m
+WARNING  [bubus]    ⏰ browser_use.browser.watchdog_base.BrowserSession.on_BrowserStartEvent(#ce2b) ⌛️ [91m30s[0m/[91m30s[0m   ⬅️ [91mTIMEOUT HERE[0m ⏰
+WARNING  [bubus]       📣 BrowserLaunchEvent#b3f5                                       [93m30s[0m
+WARNING  [bubus]          ☑️ browser_use.browser.watchdog_base.DownloadsWatchdog.on_BrowserLaunchEvent(#b3f5)    [92m 0s[0m/30s   ✓
+WARNING  [bubus]          ➡️ browser_use.browser.watchdog_base.LocalBrowserWatchdog.on_BrowserLaunchEvent(#b3f5) ⏳ [93m30s[0m/30s   ⬅️ [93mINTERRUPTED[0m ✂️
+WARNING  [bubus] 
+================================================================================
+

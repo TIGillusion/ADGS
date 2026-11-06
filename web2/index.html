@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 2026-09-02 Web2 重写版：旧版 / 保留。空 favicon 消除 404 -->
+<link rel="icon" href="data:,">
+<title>ADGS · 进化智能体系统 v2</title>
+<link rel="stylesheet" href="./static/style.css">
+</head>
+<body data-theme="dark">
+
+<!-- ================= 侧边栏 ================= -->
+<aside id="sidebar">
+  <div class="sb-head">
+    <div class="sb-logo">ADGS<span>v2</span></div>
+    <button id="btn-collapse" title="折叠侧栏">«</button>
+  </div>
+  <div class="sb-section">历史会话</div>
+  <div id="hist-list" class="sb-list"></div>
+  <div class="sb-foot">
+    <button id="btn-newsess" class="sb-btn">＋ 新建对话</button>
+    <button id="btn-nodes" class="sb-btn">☰ 节点管理</button>
+  </div>
+</aside>
+
+<!-- ================= 主区域 ================= -->
+<main id="main">
+
+  <!-- 欢迎页 -->
+  <section id="welcome-wrap">
+    <div class="wl-box">
+      <h1 class="wl-logo">ADGS <span>进化智能体系统</span></h1>
+      <p class="wl-sub">CEO(DeepSeek)拆解 · 种群节点(vLLM qwen)执行 · 达尔文式繁衍淘汰</p>
+      <div class="wl-input-row">
+        <textarea id="wl-input" rows="3" placeholder="描述一个任务，例如：修复猎头系统首页三模块联动…（回车发送 / Shift+Enter 换行）"></textarea>
+        <button id="wl-send">发送任务</button>
+      </div>
+      <div class="wl-stats" id="wl-stats">—</div>
+    </div>
+  </section>
+
+  <!-- 主视图 -->
+  <section id="main-wrap" class="hidden">
+    <div id="graph-bar">
+      <span id="graph-title">任务进化图谱</span>
+      <span id="graph-status" class="idle">空闲</span>
+      <span class="bar-right">
+        <button id="btn-layout" class="bar-btn" title="整理布局：树状→圆形→恢复原版 循环">整理布局</button>
+        <button id="btn-tasks" class="bar-btn" title="任务总览：所有任务图谱分开排列">任务总览</button>
+        <button id="btn-theme" class="bar-btn" title="切换 白天/夜晚">☀ 白天</button>
+      </span>
+    </div>
+    <div id="graph-wrap">
+      <canvas id="graph"></canvas>
+      <div id="graph-hint">拖拽移动 · 滚轮缩放 · 点击节点看详情 · 双击空白收起</div>
+    </div>
+    <div id="divider-gc" class="divider h" title="拖拽调整图谱高度"></div>
+    <div id="chat-wrap">
+      <div class="chat-bar">
+        <span>对话</span>
+        <button id="btn-clear" class="mini-btn">清空显示</button>
+      </div>
+      <div id="chat-log"></div>
+      <div class="chat-input-row">
+        <textarea id="chat-input" rows="1" placeholder="继续对话（续接当前会话）或输入新任务…"></textarea>
+        <button id="chat-send">发送</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 节点管理视图 -->
+  <section id="nodes-wrap" class="hidden">
+    <div class="nodes-head">
+      <span id="nodes-back">← 返回图谱</span>
+      <span id="nodes-title">节点管理</span>
+      <input id="nodes-search" placeholder="搜索 id / 描述 / 技能…">
+    </div>
+    <div id="nodes-count" class="nodes-count"></div>
+    <div id="nodes-list" class="nodes-list"></div>
+  </section>
+</main>
+
+<!-- ================= 右侧详情面板 ================= -->
+<aside id="detail" class="hidden">
+  <div id="detail-head">
+    <span id="detail-title">节点详情</span>
+    <span class="dh-actions">
+      <button id="detail-open-edit" class="mini-btn hidden">📋 节点管理</button>
+      <button id="detail-close" class="mini-btn">✕</button>
+    </span>
+  </div>
+  <div id="detail-body">
+    <div class="dl-block">
+      <div class="dl-label">任务 / 目标</div>
+      <pre id="detail-task-goal" class="dl-text"></pre>
+    </div>
+    <div class="dl-block">
+      <div class="dl-label">节点信息</div>
+      <pre id="detail-meta" class="dl-text"></pre>
+    </div>
+    <div class="dl-block hidden" id="dl-hermes-block">
+      <div class="dl-label">执行日志</div>
+      <div id="detail-hermes" class="dl-scroll"></div>
+    </div>
+  </div>
+</aside>
+
+<script src="./static/app.js"></script>
+</body>
+</html>

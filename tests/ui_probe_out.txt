@@ -1,0 +1,65 @@
+[1] 启动 Browser(headless=True, channel=msedge)...
+INFO     [BrowserSession] Setting viewport to 2560x1440 with device scale factor 1.0 whereas original device scale factor was 1.0
+[2] started, navigate...
+[3] title: 127.0.0.1:8021
+[4] state text (2091 chars):
+[71]<div />
+ADGS
+v3
+系统状态
+种群
+[87]<b />
+	174
+50
+CEO
+deepseek-v4-flash
+节点
+qwen3.6-27b
+执行
+qwen3.6-27b
+D:\user_illusion\test\lietou
+队列
+[9]<div id=divider-ss title=拖拽调整系统状态高度 />
+图例
+[124]<span />
+CEO
+[128]<span />
+任务
+[132]<span />
+节点
+[136]<span />
+临时克隆
+[140]<span />
+执行中
+[144]<span />
+完成
+[148]<span />
+失败
+[10]<div id=divider-lg title=拖拽调整图例高度 />
+历史任务
+[11]<span id=hist-new title=新建对话（重置 CEO 上下文） />
+	＋ 新对话
+[12]<div />
+	[160]<div />
+		你让你的下属去看一下当前项目，项目之前你在写，但是被中断了，现在需要你继续推进。项目修改日志应该这个项目里面有，你让下属
+	[162]<div />
+		2026-08-30 17:31:48 · 276 条
+[13]<div />
+	[164]<div />
+		写一个 alpha.py 程序：打印 ALPHA，运行验证。
+	[166]<div />
+		2026-08-29 22:49:53 · 64 条
+[14]<div />
+	[168]<div />
+		创建三个彼此独立的 Python 程序：a.py 打印 A、b.py 打印 B、c.py 打印 C，每个都运行验证输出正
+	[170]<div />
+		2026-08-29 21:58:54 · 14 条
+[15]<div />
+	[172]<div />
+		你让你的下属
+[5] screenshot -> tests/ui_probe_shot.png
+INFO     [BrowserSession] 📢 on_BrowserStopEvent - Calling reset() (force=False, keep_alive=None)
+INFO     [BrowserSession] [SessionManager] Cleared all owned data (targets, sessions, mappings)
+INFO     [BrowserSession] ✅ Browser session reset complete
+INFO     [BrowserSession] ✅ Browser session reset complete
+DONE

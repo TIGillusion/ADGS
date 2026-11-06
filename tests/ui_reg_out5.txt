@@ -1,0 +1,4 @@
+WARNING  [BrowserSession] 🔌 CDP WebSocket message handler exited unexpectedly (connection closed)
+WARNING  [BrowserSession] 🔄 WebSocket reconnection attempt 1/3...
+INFO     [BrowserSession] [SessionManager] Cleared all owned data (targets, sessions, mappings)
+WARNING  [BrowserSession] 🔄 Reconnection attempt 1 failed: ConnectionRefusedError: [WinError 1225] 远程计算机拒绝网络连接。
