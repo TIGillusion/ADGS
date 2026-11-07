@@ -10,7 +10,7 @@ _slots_lock = threading.Lock()
 
 
 class ExecutionSlot:
-    def __init__(self, semaphore, deadline, cancel=None):
+    def __init__(self, semaphore, deadline, cancel=None, activity=None):
         self.semaphore = semaphore
         self.deadline = deadline
         self.cancel = cancel
@@ -19,6 +19,17 @@ class ExecutionSlot:
         self.closed = False
         self.waiters = 0
         self.resuming = False
+        self.activity = activity
+
+    def emit_status(self, status, reason):
+        if not self.activity:
+            return
+        try:
+            from web.event_bus import bus
+            bus.emit('node.status', **self.activity, status=status, waiting_reason=reason)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Could not publish execution wait status')
 
     def is_set(self):
         return self.closed or (self.cancel is not None and self.cancel.is_set())
@@ -39,6 +50,9 @@ class ExecutionSlot:
                 if self.held:
                     self.held = False
                     self.semaphore.release()
+            notify = tracked and self.waiters == 1
+        if notify:
+            self.emit_status('delegating', '等待下属汇报')
         try:
             yield
         finally:
@@ -50,6 +64,7 @@ class ExecutionSlot:
                     if resume:
                         self.resuming = True
             if resume:
+                self.emit_status('waiting', '重新取得执行名额')
                 acquired = self.semaphore.acquire(cancel=self)
                 with self.lock:
                     self.resuming = False
@@ -58,6 +73,9 @@ class ExecutionSlot:
                         self.held = True
                     elif acquired:
                         self.semaphore.release()
+                    running = self.held and not self.closed and not self.waiters
+                if running:
+                    self.emit_status('running', '')
                 if not acquired and not closed:
                     if self.cancel is not None:
                         self.cancel.set()
@@ -65,8 +83,9 @@ class ExecutionSlot:
 
 
 @contextmanager
-def owned_execution_slot(execution_id, semaphore, deadline, cancel=None):
-    slot = ExecutionSlot(semaphore, deadline, cancel)
+def owned_execution_slot(execution_id, semaphore, deadline, cancel=None, activity=None):
+    slot = ExecutionSlot(semaphore, deadline, cancel,
+                         {**activity, 'execution_id': execution_id} if activity else None)
     try:
         with _slots_lock:
             if execution_id in _slots:
@@ -92,12 +111,20 @@ def lend_execution_slot(execution_id):
 
 
 def execution_is_waiting(execution_id):
+    return execution_wait_state(execution_id) is not None
+
+
+def execution_wait_state(execution_id):
     with _slots_lock:
         slot = _slots.get(execution_id)
     if slot is None:
-        return False
+        return None
     with slot.lock:
-        return not slot.closed and (slot.waiters > 0 or slot.resuming or not slot.held)
+        if slot.closed:
+            return None
+        if slot.waiters > 0:
+            return 'children'
+        return 'slot' if slot.resuming or not slot.held else None
 
 
 class DelegationThreads:

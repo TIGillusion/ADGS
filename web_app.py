@@ -244,6 +244,10 @@ def api_state():
     ceo_activity.setdefault("phase", "deciding" if ceo_busy else "idle")
     from core import node as node_runtime
     capacity = node_runtime.execution_capacity() if hasattr(node_runtime, "execution_capacity") else {}
+    from web.execution_api import runtime_fields
+    execution_states = [{**row, **runtime_fields(row['execution_id'], row.get('node_id'))}
+                        for row in execution_store.session_states(owner)]
+    snapshot_at = time.time()
     return jsonify({
         "ok": True,
         "workspace": meta["workspace"] if meta else config.workspace,
@@ -262,6 +266,8 @@ def api_state():
         "event_id": bus.last_id,
         "ceo_execution_id": ceo_state.get("_hermes_execution_id"),
         "ceo": ceo_activity,
+        "executions": execution_states,
+        "snapshot_at": snapshot_at,
         "busy": _session_busy(selected) if selected else _busy["state"],
         "worker_hold": worker_launch_on_hold(),
         "mesh": _mesh_status,

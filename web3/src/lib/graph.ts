@@ -1,3 +1,4 @@
+import { activeGraphStatus, graphStatus } from "@/lib/executionState";
 // ============================================================
 // 图谱模型 — SSE reducer + graphFlow 统一轮次/批次投影
 // nodes 保留旧状态归因接口；web3 渲染和详情使用 displayGraph(state)。
@@ -55,7 +56,7 @@ export const CEO_KEY = "ceo";
 const ACTIVE_STATUSES: ReadonlySet<GraphNodeStatus> = new Set([
   "waiting",
   "running",
-  "delegating",
+  "delegating", "evaluating",
 ]);
 
 export function graphInit(): GraphState {
@@ -136,7 +137,7 @@ function isStatus(s: unknown): s is GraphNodeStatus {
     s === "idle" ||
     s === "waiting" ||
     s === "running" ||
-    s === "delegating" ||
+    s === "delegating" || s === "evaluating" || s === "waiting_user" ||
     s === "done" ||
     s === "failed" || s === "interrupted" || s === "unknown" ||
     s === "unjudged" || s === "blocked"
@@ -503,7 +504,7 @@ function onNodeStatus(
 
   // 兜底：状态事件先于 dispatch 到达 → 建临时实例挂当前轮（避免状态丢失；
   // 轮次锚点缺失时兜底建轮，不直挂 CEO——2026-10-23 用户报告）
-  if (d.execution_id || (!task && (status === "waiting" || status === "running" || status === "delegating"))) {
+  if (d.execution_id || (!task && (activeGraphStatus(status)))) {
     const ensured = ensureRound(state, now);
     const key = instKey || `${node}@${ensured.currentRound}`;
     if (ensured.nodes.some((n) => n.key === key)) return state;
@@ -638,7 +639,7 @@ export function graphFromSaved(saved: SavedGraphNode[]): GraphState {
         : "node"; // 旧版 clone/其它 → 统一按执行节点
     // Saved transient states are unknown unless an actual acceptance result exists.
     let status: GraphNodeStatus = isStatus(s.status) ? s.status : "idle";
-    if (status === "waiting" || status === "running" || status === "delegating") {
+    if (activeGraphStatus(status)) {
       const passed = s.extra ? (s.extra as Record<string, unknown>).passed : undefined;
       status = passed === true ? "done" : passed === false ? "failed" : "unknown";
     }
@@ -690,7 +691,7 @@ export function graphFromSaved(saved: SavedGraphNode[]): GraphState {
     n.extra.seq = seq;
   }
   const flow = saved.find(n => n.key === CEO_KEY)?.extra?.flow_snapshot as FlowSnapshot | undefined;
-  return { nodes, roundSeq, currentRound, a2aEdges: [], ...(flow ? { flow } : {}) };
+  return { nodes, roundSeq, currentRound, a2aEdges: [], ...(flow ? { flow:{...flow,nodes:flow.nodes.map(n=>({...n,status:graphStatus(n.status)}))} } : {}) };
 }
 
 // ---------------- 查询工具 ----------------

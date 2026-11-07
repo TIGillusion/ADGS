@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { store, useAppState } from "@/lib/store";
-import { nodeIdLabel, pct, scoreTone } from "@/lib/format";
+import { nodeIdLabel, pct, score, scoreTone } from "@/lib/format";
 import { Button, Chip, ConfirmModal, Empty, ScoreBar, Spinner } from "@/components/ui";
 import type { NodeSummary } from "@/types";
 
@@ -24,16 +24,6 @@ const BIRTH_TEXT: Record<string, string> = {
   recombine: "重组",
   whiteboard: "白板",
 };
-
-function toneText(tone: string): string {
-  return tone === "ok"
-    ? "text-ok-400"
-    : tone === "life"
-      ? "text-life-400"
-      : tone === "warn"
-        ? "text-warn-400"
-        : "text-danger-400";
-}
 
 function NodeRow({ n, archived = false, meshOut = 0, meshIn = 0 }:
                  { n: NodeSummary; archived?: boolean; meshOut?: number; meshIn?: number }) {
@@ -73,8 +63,8 @@ function NodeRow({ n, archived = false, meshOut = 0, meshIn = 0 }:
             委派 {meshOut}↔{meshIn}
           </div>
         )}
-        <div className={`node-score num w-[56px] text-right text-[13px] font-semibold ${toneText(scoreTone(n.score))}`}>
-          {(n.score ?? 0).toFixed(1)}
+        <div className={`node-score num w-[56px] text-right text-[13px] font-semibold ${scoreTone(n.score)}`}>
+          {score(n.score)}
         </div>
         <div className="node-success w-[110px]">
           <div className="mb-1 flex justify-between text-[10px] text-ink-600">

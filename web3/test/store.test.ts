@@ -108,6 +108,45 @@ it("重复轮询CEO快照不增加图谱事件，过时快照不能覆盖新阶�
   expect(store.getState().snap?.ceo?.phase).toBe('waiting_children');
 });
 
+it("迟到的HTTP快照不能覆盖较新的忙碌和队列状态", async () => {
+  let finishOld!:(value:StateSnapshot)=>void;
+  api.state.mockImplementationOnce(()=>new Promise<StateSnapshot>(resolve=>{finishOld=resolve;}));
+  const old=store.refreshState();
+  api.state.mockResolvedValueOnce({...snap(),busy:true,queue_len:1,queue:[{id:'q',session:null,text:'待处理'}]});
+  await store.refreshState();
+  finishOld({...snap(),busy:false,queue_len:0});await old;
+  expect(store.getState().busy).toBe(true);expect(store.getState().queueLen).toBe(1);
+});
+
+it("Worker快照补回漏掉的完成事件且不制造新的消息或传输", async () => {
+  store.handleEvent(ev('graph.dispatch',{node:'a',execution_id:'e',task_id:'t'}));
+  const previous=store.getState();
+  api.state.mockResolvedValueOnce({...snap(),snapshot_at:ts+100,executions:[{execution_id:'e',node_id:'a',state:'passed',phase:'finished',runtime_active:false}]});
+  await store.refreshState();
+  const n=displayGraph(store.getState().graph).nodes.find(n=>n.extra.execution_id==='e');
+  expect(n?.status).toBe('done');expect(store.getState().messages).toEqual(previous.messages);
+  expect(store.getState().graph.flow?.signals).toEqual(previous.graph.flow?.signals);
+});
+
+it("A2A委派和汇报内容确实进入聊天，不只更新图谱", () => {
+  store.handleEvent(ev('a2a.delegate',{parent:'a',node:'b',delegation_id:'did',status:'running',summary:'任务书'}));
+  store.handleEvent(ev('a2a.delegate',{parent:'a',node:'b',delegation_id:'did',status:'passed',summary:'已核对'}));
+  expect(store.getState().messages.map(m=>m.text).join('\n')).toContain('A2A 委派');
+  expect(store.getState().messages.at(-1)?.text).toContain('已核对');
+});
+
+it("开始与结束事件立即更新忙碌，过时快照不撤销刚收到的队列", async () => {
+  await store.refreshState();
+  store.handleEvent(ev('chat.user',{text:'开始'}));
+  expect(store.getState().busy).toBe(true);
+  store.handleEvent(ev('queue.update',{queue:[{id:'q',session:null,text:'排队'}]}));
+  api.state.mockResolvedValueOnce({...snap(),snapshot_at:1});
+  await store.refreshState();
+  expect(store.getState().busy).toBe(true);expect(store.getState().queueLen).toBe(1);
+  store.handleEvent(ev('system',{msg:'当前运行已结束'}));
+  expect(store.getState().busy).toBe(false);
+});
+
 beforeEach(async () => {
   vi.resetModules();
   vi.useFakeTimers();

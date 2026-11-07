@@ -15,6 +15,7 @@ import { GraphCanvas, statusText } from "@/lib/graphCanvas";
 import { nodeIdLabel, scoreTone } from "@/lib/format";
 import { Chip, Empty } from "@/components/ui";
 import { displayGraph } from "@/lib/graphFlow";
+import { GRAPH_STATUS, activeGraphStatus, graphStatus } from "@/lib/executionState";
 import { ceoPhaseLabel } from "@/lib/ceo";
 
 function GraphTooltip({
@@ -28,7 +29,7 @@ function GraphTooltip({
   const node = useMemo(() => graph.nodes.find((n) => n.key === nodeKey), [graph, nodeKey]);
   if (!node) return null;
   const isInst = node.type === "node";
-  const tone = scoreTone(node.extra.score ?? 0);
+  const tone = scoreTone(node.extra.score);
   return (
     <div
       className="surface-glass pointer-events-none absolute z-30 w-[280px] rounded-xl p-3"
@@ -41,7 +42,7 @@ function GraphTooltip({
         {node.type === "ceo" && <Chip color="ceo">CEO</Chip>}
         {node.type === "round" && <Chip color="pulse">轮次</Chip>}
         {node.type === "task" && <Chip color="dim">任务</Chip>}
-        {isInst && <Chip color={node.status === "failed" ? "danger" : node.status === "done" ? "ok" : "life"}>{statusText(node.status)}</Chip>}
+        {isInst && <Chip color={GRAPH_STATUS[graphStatus(node.status)].tone}>{statusText(node.status)}</Chip>}
         {isInst && node.extra.mode === "clone" && <Chip color="gene">临时克隆</Chip>}
       </div>
       <div className="num mt-2 text-[13px] font-semibold text-ink-100">
@@ -58,7 +59,7 @@ function GraphTooltip({
         {isInst && node.extra.score != null && (
           <div className="flex justify-between">
             <span>评分</span>
-            <span className={`num ${tone === "ok" ? "text-ok-400" : tone === "life" ? "text-life-400" : tone === "warn" ? "text-warn-400" : "text-danger-400"}`}>
+            <span className={`num ${tone}`}>
               {node.extra.score.toFixed(1)}
               {node.extra.passed != null && (node.extra.passed ? " · 通过" : " · 未通过")}
               {node.extra.reworks != null && node.extra.reworks > 0 ? ` · 返工${node.extra.reworks}` : ""}
@@ -86,26 +87,14 @@ function GraphTooltip({
 }
 
 function Legend() {
-  const items: { c: string; t: string }[] = [
-    { c: "var(--color-ceo-400)", t: "CEO" },
-    { c: "var(--color-pulse-400)", t: "轮次" },
-    { c: "var(--color-pulse-300)", t: "批次" },
-    { c: "var(--color-life-500)", t: "执行中" },
-    { c: "var(--color-warn-400)", t: "排队" },
-    { c: "var(--color-gene-500)", t: "委派" },
-    { c: "var(--color-ok-500)", t: "完成" },
-    { c: "var(--color-danger-500)", t: "失败" },
-  ];
-  return (
-    <div className="surface-glass pointer-events-none absolute bottom-4 left-4 z-20 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-xl px-3.5 py-2.5">
-      {items.map((i) => (
-        <span key={i.t} className="flex items-center gap-1.5 text-[10.5px] text-ink-500">
-          <span className="dot" style={{ background: i.c, width: 7, height: 7 }} />
-          {i.t}
-        </span>
-      ))}
+  const sse=useAppState(s=>s.sse);
+  return <div className="graph-legend surface-glass absolute bottom-4 left-4 z-20 rounded-xl px-3.5 py-2.5">
+    <div className="flex flex-wrap items-center gap-3 text-[10.5px] text-ink-500">
+      {[{label:"CEO",color:"--canvas-ceo"},{label:"轮次",color:"--canvas-round"},{label:"批次",color:"--canvas-task"}].map(item=><span key={item.label} className="flex items-center gap-1.5"><span className="dot" style={{background:`var(${item.color})`,width:7,height:7}}/>{item.label}</span>)}
+      <details><summary className="cursor-pointer">节点状态颜色</summary><div className="graph-status-legend">{Object.entries(GRAPH_STATUS).map(([status,item])=><span key={status} data-graph-status={status}><i style={{background:`var(${item.color})`}}/>{item.label}</span>)}</div></details>
     </div>
-  );
+    <div className="mt-1.5 text-[10px] text-ink-500">流点：近期派发 → / 汇报 ← · 3 秒后结束{sse!=="open" ? " · 连接中断，显示最近记录" : ""}</div>
+  </div>;
 }
 
 function GraphToolbar({
@@ -217,7 +206,7 @@ export function GraphView({ embedded }: { embedded?: boolean }) {
       else if (n.type === "task") tasks++;
       else if (n.type === "node") {
         nodes++;
-        if (["waiting", "running", "delegating"].includes(n.status)) active++;
+        if (activeGraphStatus(n.status)) active++;
       }
     }
     return { active, rounds, tasks, nodes };
@@ -228,6 +217,7 @@ export function GraphView({ embedded }: { embedded?: boolean }) {
     if (!canvas) return;
     const eng = new GraphCanvas(canvas, {
       getGraph: () => displayGraph(store.getState().graph),
+      getLive: () => { const state=store.getState(); return state.sse === "open" && state.busy && Date.now()-(state.stateReceivedAt || 0)<25000; },
       selected: () => store.getState().selectedInst,
       getFocusRound: () => store.getState().graphFocusRound,
       getLayoutMode: () => store.getState().graphLayoutMode,

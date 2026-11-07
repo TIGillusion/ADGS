@@ -65,6 +65,20 @@ class ExecutionStore:
                 "SELECT payload FROM executions WHERE json_extract(payload,'$.parent_execution_id')=?",
                 (parent_execution_id,))]
 
+    def session_states(self, session_name):
+        """Small inspection projection; never ship task contracts or work logs in polling."""
+        if not session_name:
+            return []
+        fields = ('execution_id', 'node_id', 'task_id', 'run_id', 'state', 'phase',
+                  'updated_at', 'started_at', 'ended_at', 'parent_execution_id')
+        with self.lock, self._connect() as conn:
+            conn.execute("CREATE INDEX IF NOT EXISTS executions_owner ON executions "
+                         "(json_extract(payload,'$.session_name'))")
+            columns = ','.join(f"json_extract(payload,'$.{field}')" for field in fields)
+            rows = conn.execute(f"SELECT {columns} FROM executions WHERE "
+                                "json_extract(payload,'$.session_name')=?", (session_name,)).fetchall()
+            return [dict(zip(fields, row)) for row in rows]
+
     def put(self, execution_id, **fields):
         with self.lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

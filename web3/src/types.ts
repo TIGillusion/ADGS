@@ -63,6 +63,9 @@ export interface ExecutionDetail {
   run_id: string;
   state: string;
   phase?: string;
+  waiting_for_children?: boolean;
+  waiting_for_slot?: boolean;
+  runtime_active?: boolean;
   started_at?: number;
   ended_at?: number | null;
   last_activity_at?: number;
@@ -158,6 +161,8 @@ export interface CeoActivity {
 }
 
 export interface StateSnapshot {
+  snapshot_at?: number;
+  executions?: ExecutionStateSnapshot[];
   ceo?: CeoActivity;
   event_id?: number;
   ceo_execution_id?: string | null;
@@ -178,6 +183,17 @@ export interface StateSnapshot {
   queue_len: number;
   queue?: QueueItem[];
   boot_ts: number;
+}
+
+export interface ExecutionStateSnapshot {
+  execution_id: string;
+  node_id: string;
+  state: string;
+  phase?: string;
+  runtime_active?: boolean;
+  waiting_for_children?: boolean;
+  waiting_for_slot?: boolean;
+  updated_at?: number;
 }
 
 // ---------------- 模型配置（2026-09-27 web 配置入口） ----------------
@@ -284,6 +300,8 @@ export type GraphNodeStatus =
   | "waiting"
   | "running"
   | "delegating"
+  | "evaluating"
+  | "waiting_user"
   | "done"
   | "failed"
   | "interrupted"
@@ -306,6 +324,8 @@ export interface GraphNode {
     instruction?: string;
     source?: string;
     last_input_event?: string;
+      active_batch?: string;
+      statusTs?: number;
     execution_id?: string;
     attempt_id?: string;
     run_id?: string;

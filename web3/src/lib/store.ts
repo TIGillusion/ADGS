@@ -1,3 +1,4 @@
+import { reconcileGraphSnapshot } from "@/lib/graphSnapshot";
 // ============================================================
 // 全局 store — 单一数据源
 // - useSyncExternalStore 订阅（无额外依赖）
@@ -46,6 +47,7 @@ export interface AppState {
   projectSupport: boolean;
   boot: { status: "loading" | "ok" | "error"; error?: string };
   snap: StateSnapshot | null;
+  stateReceivedAt?: number;
   view: ViewId;
   /** 当前查看的会话名；null = 实时视图 */
   viewSession: string | null;
@@ -269,6 +271,9 @@ class Store {
     } catch { /* Keep the in-memory draft usable if browser storage is full. */ }
   }
   private loadVersion = 0;
+  private stateRequest = 0;
+  private lastRunEventAt = 0;
+  private lastQueueEventAt = 0;
   private layouts = new Map<string, Pick<AppState, "graphManual" | "graphLayoutMode" | "graphFocusRound">>();
   private lastEventId = 0;
   private executionEvents = new Map<string, BusEvent[]>();
@@ -358,7 +363,7 @@ class Store {
     try {
       const snap = await api.state();
       this.lastBootTs = snap.boot_ts;
-      this.set({ snap, boot: { status: "ok" }, busy: snap.busy, queueLen: snap.queue_len, queue: snap.queue ?? [] });
+      this.set({ snap, stateReceivedAt: Date.now(), boot: { status: "ok" }, busy: snap.busy, queueLen: snap.queue_len, queue: snap.queue ?? [] });
       // 启动时重放最近事件（后端重启前遗留，含当前任务的中间状态）
       const pending = snap.events ?? [];
       if (pending.length) {
@@ -503,11 +508,16 @@ class Store {
       if (this.state.liveSession !== ev.session) this.set({ liveSession: ev.session });
       if (s.viewSession && ev.session !== s.viewSession) return;
     }
+    if ((runStarted || runEnded) && (!s.projectSupport || Boolean(ev.session && ev.session===s.viewSession))) {
+      this.lastRunEventAt=ev.ts;
+      this.set({busy:runStarted});
+    }
 
     // 2) 聊天消息
     if (ev.type === "chat.ceo_activity") {
       const ceo = ev.data as unknown as import("@/types").CeoActivity;
       const snap = this.state.snap;
+      if(ceo.updated_at && snap?.ceo && snap.ceo.execution_id===ceo.execution_id && ceo.updated_at<(snap.ceo.updated_at||0)) return;
       if (snap) this.set({ snap: { ...snap, ceo, ceo_execution_id: ceo.execution_id } });
     }
     let msg = eventToMessage(ev);
@@ -520,15 +530,13 @@ class Store {
         msg = { ...msg, text: full };
       }
     }
-    if (msg) {
-      this.set({ messages: [...s.messages, msg].slice(-MSG_CAP) });
-    }
 
     // 3) 图谱
     const d = ev.data ?? {};
     // 队列实时同步（2026-10-22）：入队/出队/编辑/撤销由后端推送完整快照；
     // 运行结束信号立即刷新 busy（不再等 8s 轮询纠正「思考中」残留）
     if (ev.type === "queue.update" && Array.isArray(d.queue)) {
+      this.lastQueueEventAt=ev.ts;
       const items = d.queue as QueueItem[];
       const visible = this.state.projectSupport && this.state.viewSession ? items.filter(item => item.session === this.state.viewSession) : items;
       this.set({ queue: visible, queueLen: visible.length });
@@ -556,6 +564,7 @@ class Store {
         text: `【A2A 复核】${String(d.parent ?? "?")} 判定 ${String(d.node ?? "?")} 的委派结果：${passed ? "✅ 通过" : "❌ 未通过"}${d.detail ? `（${String(d.detail).slice(0, 120)}）` : ""}`,
       };
     }
+    if (msg) this.set({ messages: [...s.messages, msg].slice(-MSG_CAP) });
     const nodeId = d.node != null ? String(d.node) : "";
     const profile = d.profile != null ? String(d.profile) : "";
     if (GRAPH_RELEVANT.has(ev.type)) {
@@ -696,10 +705,14 @@ class Store {
 
   async refreshState(): Promise<void> {
     try {
-      const selected = this.state.projectSupport ? this.state.viewSession : null;
+      const request = ++this.stateRequest;
+      const requestedSession = this.state.viewSession;
+      const selected = this.state.projectSupport ? requestedSession : null;
       const snap = selected ? await api.state(selected) : await api.state();
-      if (selected && selected !== this.state.viewSession) return;
+      if (request !== this.stateRequest || requestedSession !== this.state.viewSession) return;
       const cur = this.state;
+      if(snap.snapshot_at && snap.snapshot_at < this.lastRunEventAt) snap.busy=cur.busy;
+      if(snap.snapshot_at && snap.snapshot_at < this.lastQueueEventAt) { snap.queue=cur.queue; snap.queue_len=cur.queueLen; }
       if (!cur.projectSupport && snap.capabilities?.projects) void this.refreshProjects();
       // 后端重启检测：CEO 上下文与事件历史已清空 → 本地同步重置
       if (this.lastBootTs != null && snap.boot_ts !== this.lastBootTs) {
@@ -739,11 +752,10 @@ class Store {
         snap.ceo = this.state.snap?.ceo;
         snap.ceo_execution_id = snap.ceo?.execution_id;
       }
-      const graph = snap.ceo ? applyEventToGraph(this.state.graph, {
-        type: "chat.ceo_activity", ts: 0, data: { ...snap.ceo },
-      }, Date.now()) : this.state.graph;
+      const graph = reconcileGraphSnapshot(this.state.graph, snap);
       this.set({
         snap,
+        stateReceivedAt: Date.now(),
         graph,
         busy: snap.busy,
         queueLen: snap.queue_len,
@@ -992,6 +1004,7 @@ class Store {
 
   async loadSession(name: string): Promise<void> {
     const version = ++this.loadVersion;
+    this.lastRunEventAt=0; this.lastQueueEventAt=0;
     if (this.state.projectSupport) {
       const current = this.state.viewSession;
       if (current && this.state.sessionMeta?.name === current) this.layouts.set(current, {graphManual:this.state.graphManual,graphLayoutMode:this.state.graphLayoutMode,graphFocusRound:this.state.graphFocusRound});

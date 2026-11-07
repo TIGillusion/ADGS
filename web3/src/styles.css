@@ -103,6 +103,16 @@
   --canvas-idle: #6d7f9f;
   --canvas-text: #eaf1fd;
   --canvas-text-dim: #93a4c3;
+  --canvas-ceo: #f5c96b;
+  --canvas-round: #8be9ff;
+  --canvas-task: #a5edff;
+  --canvas-waiting: #fbbf24;
+  --canvas-running: #2fe0bd;
+  --canvas-delegating: #9a72f5;
+  --canvas-evaluating: #8be9ff;
+  --canvas-done: #3ecf7f;
+  --canvas-failed: #f4535f;
+  --canvas-selection: #5ff2d6;
 
   color-scheme: dark;
 }

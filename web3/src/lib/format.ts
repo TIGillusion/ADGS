@@ -14,7 +14,7 @@ export function score(v: number | undefined | null): string {
 
 /** 分数 → 语义色类（用于文本着色） */
 export function scoreTone(v: number | undefined | null): string {
-  if (v == null) return "text-ink-500";
+  if (v == null || !Number.isFinite(v)) return "text-ink-500";
   if (v >= 80) return "text-ok-400";
   if (v >= 60) return "text-life-400";
   if (v >= 40) return "text-warn-400";

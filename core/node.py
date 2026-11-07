@@ -1119,6 +1119,7 @@ class NODE:
             return {"output": "", "exit_code": -1, "error": "任务总预算耗尽",
                     "session_id": session_id, "infra_failure": True, 'termination_reason':'wall_timeout'}
         self._attempt_id = uuid.uuid4().hex
+        execution_store.put(self._execution_id, phase="queued")
         bus.emit("node.status", node=self.node_id, profile=self.profile, status="waiting",
                  task=getattr(self, "_work_task_id", None), attempt_id=self._attempt_id, waiting_reason="执行并发槽")
         if not _EXEC_SEM.acquire(cancel=getattr(self, "_cancel", None)):
@@ -1126,7 +1127,9 @@ class NODE:
                     "session_id": session_id, "infra_failure": True,
                     'termination_reason':'cancelled' if getattr(self,'_cancel',None) and self._cancel.is_set() else 'wall_timeout'}
         with owned_execution_slot(self._execution_id, _EXEC_SEM,
-                                  getattr(self, '_deadline', time.monotonic()+budget), getattr(self, '_cancel', None)):
+                                  getattr(self, '_deadline', time.monotonic()+budget), getattr(self, '_cancel', None),
+                                  activity={'node': self.node_id, 'profile': self.profile, 'task_id': self._work_task_id,
+                                            'run_id': self._run_id, 'session': getattr(self, '_session_name', None)}):
             remaining = max(0, getattr(self, "_deadline", float("inf")) - time.monotonic())
             if remaining <= 0:
                 return {"output": "", "exit_code": -1, "error": "任务总预算耗尽",

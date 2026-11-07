@@ -1,3 +1,5 @@
+import { edgeSignal } from "@/lib/graphActivity";
+import { GRAPH_STATUS, graphStatus } from "@/lib/executionState";
 import { ceoPhaseLabel } from "@/lib/ceo";
 
 // ============================================================
@@ -86,6 +88,7 @@ interface ThemeColors {
   done: string;
   failed: string;
   selection: string;
+  evaluating: string;
 
   nodeBg: string;
 
@@ -140,6 +143,7 @@ function themeColors(): ThemeColors {
   themeCacheKey = key;
 
   themeCache = {
+    evaluating: cssVar("--canvas-evaluating", "#8be9ff"),
     ceo: cssVar("--canvas-ceo", C.ceo),
     waiting: cssVar("--canvas-waiting", C.waiting),
     running: cssVar("--canvas-running", C.running),
@@ -1195,6 +1199,9 @@ export interface GraphCanvasOptions {
   getGraph: () => GraphState;
 
   selected: () => string | null;
+
+  /** Fresh live session only; historical/disconnected views never imply message traffic. */
+  getLive?: () => boolean;
 
   handlers: GraphCanvasHandlers;
 
@@ -2293,6 +2300,8 @@ export class GraphCanvas {
 
     };
 
+    Object.assign(this.canvas,{__adgsNodeStates:laid.nodes.map(l=>({key:l.n.key,status:l.n.status,color:this.nodeColor(l.n)}))});
+
     this.drawEdges(ctx, t, now);
 
     this.drawA2aEdges(ctx, t);
@@ -2328,6 +2337,11 @@ export class GraphCanvas {
 
 
 
+  private nodeColor(n: GraphNode): string {
+    const theme=themeColors();
+    return n.type === "ceo" ? theme.ceo : n.type === "round" ? theme.round : n.type === "task" ? theme.task : this.statusColor(n);
+  }
+
   private statusColor(n: GraphNode): string {
 
     switch (n.status) {
@@ -2337,6 +2351,10 @@ export class GraphCanvas {
       case "running": return themeColors().running;
 
       case "delegating": return themeColors().delegating;
+
+      case "evaluating": return themeColors().evaluating;
+
+      case "waiting_user": return themeColors().waiting;
 
       case "done": return themeColors().done;
 
@@ -2803,6 +2821,7 @@ export class GraphCanvas {
     const hov = this.hoverKey;
 
     const live = new Set<string>();
+    const traffic: {from:string;to:string;kind:string|null}[] = [];
 
     for (const e of this.edges) {
 
@@ -2872,7 +2891,9 @@ export class GraphCanvas {
 
       const ey = sy + uy * growLen;
 
-      const active = ["waiting", "running", "delegating"].includes(e.to.n.status);
+      const flow = edgeSignal(this.opts.getGraph(), e.from.n.key, e.to.n.key, Date.now(), this.opts.getLive?.() === true);
+      const active = flow !== null;
+      traffic.push({from:e.from.n.key,to:e.to.n.key,kind:flow?.kind ?? null});
 
       const failed = e.to.n.status === "failed";
 
@@ -2888,15 +2909,15 @@ export class GraphCanvas {
 
       if (active) {
 
-        grad.addColorStop(0, "rgba(95, 242, 214, 0.10)");
+        grad.addColorStop(0, themeColors().edgeFaint);
 
-        grad.addColorStop(1, "rgba(95, 242, 214, 0.65)");
+        grad.addColorStop(1, flow.kind === "report" ? themeColors().round : themeColors().selection);
 
       } else if (failed) {
 
         grad.addColorStop(0, "rgba(244, 83, 95, 0.08)");
 
-        grad.addColorStop(1, "rgba(244, 83, 95, 0.45)");
+        grad.addColorStop(1, themeColors().failed);
 
       } else {
 
@@ -2948,7 +2969,8 @@ export class GraphCanvas {
 
         for (let i = 0; i < 2; i++) {
 
-          const p = (t * 0.45 + i * 0.5 + p0 * 0.13) % 1;
+          const progress = (t * 0.45 + i * 0.5 + p0 * 0.13) % 1;
+          const p = flow?.kind === "report" ? 1 - progress : progress;
 
           const px = sx + (ex - sx) * p;
 
@@ -2958,9 +2980,9 @@ export class GraphCanvas {
 
           ctx.arc(px, py, 2.2, 0, Math.PI * 2);
 
-          ctx.fillStyle = C.edgeActive;
+          ctx.fillStyle = flow.kind === "report" ? themeColors().round : themeColors().selection;
 
-          ctx.shadowColor = C.edgeActive;
+          ctx.shadowColor = ctx.fillStyle;
 
           ctx.shadowBlur = 6;
 
@@ -2975,6 +2997,8 @@ export class GraphCanvas {
     }
 
     // 清掉已消失的边的出生记录（防止 key 泄漏）
+
+    Object.assign(this.canvas, {__adgsTraffic:traffic});
 
     for (const k of this.edgeBirth.keys()) if (!live.has(k)) this.edgeBirth.delete(k);
 
@@ -3004,9 +3028,9 @@ export class GraphCanvas {
 
     const color =
 
-      n.type === "ceo" ? themeColors().ceo : n.type === "round" ? themeColors().round : n.type === "task" ? themeColors().task : this.statusColor(n);
+      this.nodeColor(n);
 
-    const active = ["waiting", "running", "delegating"].includes(n.status) && n.type === "node";
+    const active = n.status === "running" && n.type === "node" && this.opts.getLive?.() === true;
 
     const pulse = 0.5 + 0.5 * Math.sin(t * 3.2);
 
@@ -3038,7 +3062,7 @@ export class GraphCanvas {
 
       ctx.shadowColor = C.ceoGlow;
 
-      ctx.shadowBlur = 24 + pulse * 8;
+      ctx.shadowBlur = this.opts.getLive?.() === true && n.status === "running" ? 24 + pulse * 8 : 10;
 
     } else if (active) {
 
@@ -3360,34 +3384,5 @@ export class GraphCanvas {
 
 
 
-export function statusText(status: string): string {  switch (status) {
-
-    case "waiting": return "排队";
-
-    case "running": return "执行中";
-
-    case "delegating": return "委派中";
-
-    case "done": return "完成";
-
-    case "failed": return "失败";
-
-     case "unknown": return "待核实";
-
-     case "interrupted": return "中断";
-
-     case "unjudged": return "待验收";
-
-     case "blocked": return "受阻";
-
-    default: return "待命";
-
-  }
-
-}
-
-
-
-// re-export for tooltip 使用
-
+export function statusText(status: string): string { return GRAPH_STATUS[graphStatus(status)].label; }
 export { splitInstKey };

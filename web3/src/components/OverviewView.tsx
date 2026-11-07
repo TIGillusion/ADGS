@@ -97,8 +97,10 @@ export function OverviewView() {
   const stats = useMemo(() => {
     const nodes = snap?.nodes ?? [];
     if (!nodes.length) return null;
-    const avgScore = nodes.reduce((a, n) => a + (n.score ?? 0), 0) / nodes.length;
-    const avgRate = nodes.reduce((a, n) => a + (n.success_rate ?? 0), 0) / nodes.length;
+    const scores=nodes.map(n=>n.score).filter((value):value is number=>typeof value === "number" && Number.isFinite(value));
+    const rates=nodes.map(n=>n.success_rate).filter((value):value is number=>typeof value === "number" && Number.isFinite(value));
+    const avgScore=scores.length ? scores.reduce((sum,value)=>sum+value,0)/scores.length : null;
+    const avgRate=rates.length ? rates.reduce((sum,value)=>sum+value,0)/rates.length : null;
     const tasks = nodes.reduce((a, n) => a + (n.tasks_done ?? 0), 0);
     const top = [...nodes].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 3);
     return { avgScore, avgRate, tasks, top };
@@ -171,13 +173,13 @@ export function OverviewView() {
             </StatCard>
             <StatCard
               label="平均适应度"
-              value={stats ? stats.avgScore.toFixed(1) : "—"}
+              value={stats?.avgScore != null ? stats.avgScore.toFixed(1) : "—"}
               sub={stats ? `平均成功率 ${pct(stats.avgRate)}` : "等待节点数据"}
               accent={
-                !stats ? "var(--ink-100)" : stats.avgScore >= 80 ? "var(--color-ok-500)" : stats.avgScore >= 60 ? "var(--color-life-500)" : stats.avgScore >= 40 ? "var(--color-warn-400)" : "var(--color-danger-500)"
+                stats?.avgScore == null ? "var(--ink-100)" : stats.avgScore >= 80 ? "var(--color-ok-500)" : stats.avgScore >= 60 ? "var(--color-life-500)" : stats.avgScore >= 40 ? "var(--color-warn-400)" : "var(--color-danger-500)"
               }
             >
-              {stats && (
+              {stats?.avgScore != null && (
                 <div className="mt-2.5">
                   <ScoreBar value={stats.avgScore} />
                 </div>

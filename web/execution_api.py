@@ -24,6 +24,17 @@ def _attempt(meta):
             "ended_at": meta.get("ended"), "last_activity_at": meta.get("last_activity")}
 
 
+def runtime_fields(execution_id, node_id=None):
+    from core.node import active_cancel
+    from core.delegation_runtime import execution_wait_state
+    waiting = execution_wait_state(execution_id)
+    fields = {"waiting_for_children": waiting == 'children', "waiting_for_slot": waiting == 'slot'}
+    # CEO lifetime is owned by the session coordinator, not NODE's worker registry.
+    if node_id != 'ceo' and not execution_id.startswith('ceo-'):
+        fields['runtime_active'] = active_cancel(execution_id) is not None
+    return fields
+
+
 @execution_api.get("/api/executions/<execution_id>")
 def execution_detail(execution_id):
     if not _valid(execution_id):
@@ -41,8 +52,7 @@ def execution_detail(execution_id):
               "last_activity_at": latest.get("last_activity") or meta.get("updated_at"),
               "attempts": [_attempt(a) for a in attempts],
               "events": bus.execution_events(execution_id)}
-    from core.delegation_runtime import execution_is_waiting
-    detail["waiting_for_children"] = execution_is_waiting(execution_id)
+    detail.update(runtime_fields(execution_id, detail.get('node_id')))
     return jsonify(ok=True, execution=detail)
 
 

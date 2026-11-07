@@ -7,7 +7,7 @@ export const CEO_PHASES: Record<string, string> = {
   failed: "任务未通过", paused: "已暂停", interrupted: "中断待恢复",
 };
 export function ceoPhaseLabel(activity?: CeoActivity | null, busy = false): string {
-  return CEO_PHASES[activity?.phase || ""] || (busy ? "协调任务" : "空闲");
+  return CEO_PHASES[activity?.phase || ""] || (activity?.phase ? "阶段待核实" : busy ? "协调任务" : "空闲");
 }
 export function ceoGraphStatus(phase?: string): GraphNodeStatus {
   if (phase === "waiting_children") return "delegating";
@@ -15,5 +15,6 @@ export function ceoGraphStatus(phase?: string): GraphNodeStatus {
   if (phase === "completed" || phase === "answered") return "done";
   if (phase === "blocked" || phase === "failed") return phase;
   if (phase === "paused" || phase === "interrupted") return "interrupted";
-  return "idle";
+  if (phase === "awaiting_user") return "waiting_user";
+  return !phase || phase === "idle" ? "idle" : "unknown";
 }

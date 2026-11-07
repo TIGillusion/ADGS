@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { ResizableDrawerFrame } from "@/components/PanelFrames";
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { GRAPH_STATUS, graphStatus } from "@/lib/executionState";
 import { displayGraph } from "@/lib/graphFlow";
 import type { BusEvent } from "@/types";
 import { api } from "@/lib/api";
@@ -33,20 +34,10 @@ import {
   type NodeHist,
 } from "@/lib/nodeHistCache";
 import { store, useAppState, type NodeLogEntry } from "@/lib/store";
-import { fmtAgo, fmtTime, nodeIdLabel, pct, scoreTone } from "@/lib/format";
+import { fmtAgo, fmtTime, nodeIdLabel, pct, score, scoreTone } from "@/lib/format";
 import { Button, Chip, ConfirmModal, ScoreBar, Spinner } from "@/components/ui";
 import { splitInstKey } from "@/lib/graph";
 import type { MeshDelegation, NodeDetail, NodeSummary, SkillInfo } from "@/types";
-
-function toneClass(tone: string): string {
-  return tone === "ok"
-    ? "text-ok-400"
-    : tone === "life"
-      ? "text-life-400"
-      : tone === "warn"
-        ? "text-warn-400"
-        : "text-danger-400";
-}
 
 // ---------------- 实时日志 ----------------
 
@@ -327,8 +318,8 @@ function InstanceDetail({ nodeId, instKey, hideLogs = false }: { nodeId: string;
           <div className="grid grid-cols-2 gap-2.5">
             <div className="rounded-xl border border-ink-600/15 bg-abyss-850/60 p-3">
               <div className="section-title mb-1.5">综合评分</div>
-              <div className={`num text-[20px] font-semibold ${toneClass(scoreTone(detail.score ?? 0))}`}>
-                {(detail.score ?? 0).toFixed(1)}
+              <div className={`num text-[20px] font-semibold ${scoreTone(detail.score)}`}>
+                {score(detail.score)}
               </div>
               <div className="mt-2">
                 <ScoreBar value={detail.score ?? 0} />
@@ -592,8 +583,8 @@ function InstanceDetail({ nodeId, instKey, hideLogs = false }: { nodeId: string;
                           <span className="num text-[11px] text-ink-400">
                             {role} {other ? nodeIdLabel(other) : "?"}
                           </span>
-                          <Chip color={d.status === "passed" ? "ok" : d.status === "running" ? "life" : "dim"}>
-                            {d.status === "passed" ? "通过" : d.status === "running" ? "执行中" : d.status}
+                            <Chip color={GRAPH_STATUS[graphStatus(d.status)].tone}>
+                              {d.status === "running" ? "委派处理中" : GRAPH_STATUS[graphStatus(d.status)].label}
                           </Chip>
                           {v && (
                             <Chip color={v.passed ? "ok" : "danger"} className="num">
@@ -782,7 +773,7 @@ function TaskDetail({ nodeKey }: { nodeKey: string }) {
       {node.type === "task" && <section>
         <div className="section-title mb-2">本批委派任务（{node.extra.contracts?.length ?? children.length}）</div>
         {(node.extra.contracts ?? []).map(c => <details key={c.id} className="mb-2 rounded-lg border border-ink-600/20 bg-abyss-950/50 p-3">
-          <summary className="cursor-pointer text-[12px] text-life-300">{c.nodeId || "待路由节点"} · {c.executionId ? c.executionId.slice(0, 12) : c.taskId || c.id}</summary>
+            <summary className="cursor-pointer text-[12px] text-life-300">{c.nodeId || "待路由节点"} · {c.executionId ? c.executionId.slice(0, 12) : c.taskId || c.id} <Chip color={GRAPH_STATUS[graphStatus(c.status)].tone}>{c.status ? GRAPH_STATUS[graphStatus(c.status)].label : "状态未记录"}</Chip></summary>
           {c.historical && <div className="mt-2 text-[11px] text-warn-400">历史记录可能只有任务摘要，完整原文未保存。</div>}
           <MarkdownBody className="mt-3" text={c.input || "历史事件未保存完整任务书。"}/>
           {c.instanceKey && <button className="link-btn mt-2 text-[11px]" onClick={() => store.selectInst(c.instanceKey!)}>打开执行实例</button>}

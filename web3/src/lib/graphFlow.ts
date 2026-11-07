@@ -2,6 +2,7 @@ import type { BusEvent, GraphNode } from "@/types";
 import type { GraphState } from "@/lib/graph";
 import { ceoGraphStatus } from "@/lib/ceo";
 import type { CeoActivity } from "@/types";
+import { graphStatus } from "@/lib/executionState";
 
 export interface FlowContract {
   id: string;
@@ -11,7 +12,9 @@ export interface FlowContract {
   input: string;
   taskId?: string;
   historical?: boolean;
+  status?: GraphNode["status"];
 }
+export interface FlowSignal { ts: number; eventId: string; kind: "dispatch" | "report" }
 export interface FlowSnapshot {
   version: 1;
   nodes: GraphNode[];
@@ -21,6 +24,7 @@ export interface FlowSnapshot {
   taskInstance: Record<string, string>;
   delegationBatch: Record<string, string>;
   seen: Record<string, true>;
+  signals?: Record<string, FlowSignal>;
 }
 export const FLOW_EVENTS = new Set([
   "chat.user", "chat.ceo_tool", "chat.ceo_ask", "chat.ceo_report", "chat.ceo_finish", "chat.ceo_end", "chat.ceo_activity",
@@ -34,7 +38,7 @@ const identity = (e: BusEvent) => e.id ? `event:${e.id}` : `${e.type}:${e.ts}:${
 /** Migration retains known history and marks excerpt-only inputs instead of inventing text. */
 export function flowFromLegacy(graph: GraphState): FlowSnapshot {
   const saved = graph.nodes.find(n => n.key === "ceo")?.extra.flow_snapshot;
-  if (saved?.version === 1 && Array.isArray(saved.nodes)) return saved;
+  if (saved?.version === 1 && Array.isArray(saved.nodes)) return {...saved,nodes:saved.nodes.map(n=>({...n,status:graphStatus(n.status)}))};
   const original = graph.nodes;
   const nodes = original.filter(n => n.type !== "task").map(n => ({ ...n, extra: { ...n.extra } }));
   const f: FlowSnapshot = { version: 1, nodes, links: [], current: {}, taskBatch: {}, taskInstance: {}, delegationBatch: {}, seen: {} };
@@ -90,7 +94,7 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
   const eventId = identity(event);
   if (original.seen[eventId]) return original;
   const f: FlowSnapshot = { ...original, nodes: [], links: [...original.links], current: { ...original.current },
-    taskBatch: { ...original.taskBatch }, taskInstance: { ...original.taskInstance }, delegationBatch: { ...original.delegationBatch }, seen: { ...original.seen, [eventId]: true } };
+    taskBatch: { ...original.taskBatch }, taskInstance: { ...original.taskInstance }, delegationBatch: { ...original.delegationBatch }, signals: {...original.signals}, seen: { ...original.seen, [eventId]: true } };
   const nodes = new Map(original.nodes.map(n => [n.key, { ...n, extra: { ...n.extra } }]));
   const d = event.data ?? {};
   const now = event.ts * 1000;
@@ -139,10 +143,28 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
     const old = sameId && (!sameId.executionId || !item.executionId || sameId.executionId === item.executionId)
       ? sameId : all.find(c => c.executionId && c.executionId === item.executionId && c.taskId === item.taskId);
     const id = old?.id ?? (sameId && item.executionId ? `${item.id}@${item.executionId}` : item.id);
-    const next = { ...old, ...item, id, historical: false, input: item.input || old?.input || "" };
+    const next = { ...old, status: "waiting" as const, ...item, id, historical: false, input: item.input || old?.input || "" };
     b.extra.contracts = old ? all.map(c => c.id === old.id ? next : c) : [...all, next];
 
     b.extra.count = b.extra.contracts.length;
+  };
+  const activeBatch = (n: GraphNode) => get(n.extra.active_batch || "") ?? get([...f.links].reverse().find(l=>l.to===n.key)?.from || n.parent || "");
+  const signal = (b: GraphNode, n: GraphNode, kind: FlowSignal["kind"]) => {
+    const r = b.parent ? get(b.parent) : undefined;
+    for (const [from,to] of [[r?.parent,r?.key],[r?.key,b.key],[b.key,n.key]]) {
+      if (from && to && event.ts > 0) f.signals![`${from}\u0000${to}`] = {ts:event.ts,eventId,kind};
+    }
+  };
+  const updateContract = (n: GraphNode) => {
+    const b = activeBatch(n);
+    if (!b?.extra.contracts) return;
+    b.extra.contracts = b.extra.contracts.map(c=>c.instanceKey===n.key ? {...c,status:n.status} : c);
+  };
+  const resume = (n: GraphNode, b: GraphNode) => {
+    n.status = "waiting";
+    n.extra.active_batch = b.key;
+    n.extra.statusTs = event.ts;
+    delete n.extra.passed; delete n.extra.eval_detail; delete n.extra.runTs; delete n.extra.score;
   };
   const attach = (b: GraphNode, nodeId: string, execution: string, task: string, input: string) => {
     const mapped = f.taskInstance[task] ? get(f.taskInstance[task]) : undefined;
@@ -158,6 +180,7 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
         extra: { execution_id: execution || undefined, task_id: task, goal: input, profile: nodeId } });
     }
     if (task) f.taskInstance[task] = n.key;
+    n.extra.active_batch = b.key;
     if (n.parent !== b.key && !f.links.some(l => l.from === b.key && l.to === n!.key)) f.links.push({ from: b.key, to: n.key });
     return n;
   };
@@ -214,6 +237,7 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
     const n = attach(b, nodeId, execution, task, text(d));
     contract(b, { id: task || eventId, nodeId, executionId: execution || undefined, instanceKey: n.key, taskId: task, input: text(d) });
     addInput(n, text(d), `initial-${execution || task}`);
+    signal(b,n,"dispatch");
     append(b.key); opToOwner(ownerKey);
   } else if (event.type === "graph.instruction") {
     const continuation = d.context_mode === "continue";
@@ -222,12 +246,15 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
     const b = continuation ? batch(ownerKey, str(d.batch_id ?? d.instruction_id) || eventId)
       : get(f.taskBatch[task]) ?? batch(ownerKey, str(d.batch_id ?? task) || eventId);
     n = n ?? attach(b, nodeId, execution, task, text(d));
+    n.extra.active_batch = b.key;
+    if (continuation) resume(n,b);
     if (n.parent !== b.key && !f.links.some(l => l.from === b.key && l.to === n!.key)) f.links.push({from:b.key,to:n.key});
     contract(b, { id: continuation ? eventId : (b.extra.contracts?.find(c => c.instanceKey === n!.key)?.id ?? (task || eventId)), nodeId, executionId: execution, instanceKey: n.key, taskId: task, input: text(d) });
     const token = continuation ? str(d.instruction_id) || eventId : `initial-${execution || task}`;
     const r = addInput(n, text(d), token);
     if (d.origin) r.extra.source = str(d.origin);
     n.extra.last_input_event = eventId;
+    signal(b,n,"dispatch");
     append(b.key); opToOwner(ownerKey);
   } else if (event.type === "a2a.delegate") {
     const did = str(d.delegation_id); if (!did || !nodeId) return previous;
@@ -246,18 +273,27 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
       // The authoritative graph.instruction adds exactly one continued input.
       // Reusing the initial token here would overwrite the original task text.
       if (!continuation) addInput(n, text(d), `initial-${childExecution || childTask}`);
-      else n.status = "waiting";
+      else resume(n,b);
+      n.extra.active_batch = b.key;
+      signal(b,n,"dispatch");
     }
     append(b.key);
     for (const c of b.extra.contracts ?? []) {
       if (c.id !== did || !c.instanceKey) continue;
-      const n = get(c.instanceKey); if (n && d.status !== "running") { n.status = d.status === "passed" ? "done" : d.status === "blocked" ? "blocked" : "failed"; append(f.current[n.key]); }
+      const n = get(c.instanceKey); if (n && d.status !== "running") {
+        n.status = graphStatus(d.status); n.extra.statusTs=event.ts;
+        if(n.status!=="done"&&n.status!=="failed") delete n.extra.passed;
+        updateContract(n); signal(b,n,"report"); append(f.current[n.key]);
+      }
     }
   } else if (event.type.startsWith("a2a.")) {
     const b = get(f.delegationBatch[str(d.delegation_id)]); if (b) append(b.key);
   } else {
     let n = findInstance(nodeId, execution);
-    if (!n && task && f.taskInstance[task]) n = get(f.taskInstance[task]);
+    if (!n && task && f.taskInstance[task]) {
+      const mapped=get(f.taskInstance[task]);
+      if(!execution || !mapped?.extra.execution_id || mapped.extra.execution_id===execution) n=mapped;
+    }
     if (!n && nodeId && (execution || task)) {
       const b = get(f.taskBatch[task]) ?? batch("ceo", `recovered-${task || execution}`);
       n = attach(b, nodeId, execution, task, "");
@@ -266,18 +302,29 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
     if (n) {
       if (execution && !n.extra.execution_id) n.extra.execution_id = execution;
       if (event.type.endsWith("status")) {
+        if(event.ts < (n.extra.statusTs || 0)) return previous;
         if (d.status === "running" && n.status !== "running") n.extra.runTs = now;
-        n.status = (d.status as GraphNode["status"]) || n.status;
+        n.status = graphStatus(d.status);
+        n.extra.statusTs=event.ts;
+        if(d.infra || d.infra_failure || !["done","failed"].includes(n.status)) delete n.extra.passed;
+        else if(typeof d.passed==="boolean") n.extra.passed=d.passed;
         if (d.attempt_id) n.extra.attempt_id = str(d.attempt_id);
         if (d.score != null) n.extra.score = Number(d.score);
       }
       if (event.type === "node.eval") {
+        const late=event.ts < (n.extra.statusTs || 0);
+        const outcome=d.unjudged || d.infra_failure ? "unjudged" : d.passed===true ? "done" : d.passed===false ? "failed" : n.status;
+        if(late && outcome!==n.status) return previous;
         n.extra.eval_detail = str(d.detail);
         if (d.unjudged || d.infra_failure) delete n.extra.passed;
         else if (typeof d.passed === "boolean") n.extra.passed = d.passed;
         n.status = d.unjudged || d.infra_failure ? "unjudged" : d.passed === true ? "done" : d.passed === false ? "failed" : n.status;
+        n.extra.statusTs=Math.max(event.ts,n.extra.statusTs||0);
       }
       if (event.type === "node.eval" || event.type.endsWith("status")) {
+        updateContract(n);
+        const b=activeBatch(n);
+        if(b && !["running","waiting","delegating","evaluating"].includes(n.status)) signal(b,n,"report");
         const latest = [...f.links].reverse().find(l => l.to === n!.key);
         append(latest?.from ?? n.parent ?? undefined);
       }
