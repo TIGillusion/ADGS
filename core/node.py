@@ -566,6 +566,10 @@ class NODE:
                     "action": "ask_upper", "question": decision.get("question"),
                     "need_info": decision.get("need_info", []), "task_md": task_md}
         if decision.get("action") == "split_tasks":
+            from core.contracts import delegation_restriction
+            restriction = delegation_restriction(task_md)
+            if restriction:
+                return self._unjudged(task_md, {}, "protocol_error", restriction)
             tasks = decision.get("subtasks") or []
             try:
                 validate_dependencies(tasks)
@@ -611,13 +615,20 @@ class NODE:
     def _a2a_section(self) -> str:
         """任务书附加段：告知 worker 它的种群身份与协作工具（MCP: adgs-mesh）。"""
         depth = getattr(self,'_delegation_depth',0)
+        from core.contracts import delegation_restriction
+        contract = execution_store.get(self._execution_id) or {}
+        restriction = delegation_restriction(contract.get("task_md", ""))
         depth_policy = (f'当前深度 {depth}/{config.max_delegation_depth}，已到委派深度上限：不要再发新委派，执行本层工作并如实汇报。'
                         if depth >= config.max_delegation_depth else
                         f'当前深度 {depth}/{config.max_delegation_depth}，可以继续向下委派；子节点同样有拆分和委派权。')
+        responsibility = "你首先是这份任务的负责人，需要选择合适的分工，而不是默认把所有工作塞进自己的一次会话。"
+        if restriction:
+            depth_policy = restriction + "。深度尚有余量也不能覆盖本任务的叶子约束。"
+            responsibility = "本任务明确要求你作为叶子直接执行，在当前上下文完成分配的工作；不得再创建下级任务。"
         return f"""## 种群协作（A2A，节点身份：{self.node_id}，你的执行 ID：{self._execution_id}）
 
 你是 ADGS 节点种群的一员，拥有完全的主观能动性：调查、选人、拆分、委派、验收
-由你自主决策。你首先是这份任务的负责人，需要选择合适的分工，而不是默认把所有工作塞进自己的一次会话。
+由你在当前任务约束内自主决策。{responsibility}
 {depth_policy}
 
 开工前先做复杂度和分工判断：
@@ -711,6 +722,7 @@ class NODE:
         """机械核验：交付物清单里形似路径的项逐个检查存在性（独立验收的证据输入）。"""
         from pathlib import Path
         block = task_section(task_md, "交付物") or ""
+        inline_contract = False
         # Mesh contracts may name an output outside a formal deliverables
         # heading, including long report-writing assignments. Only include
         # explicit write targets, not paths mentioned as inputs/background.
@@ -735,6 +747,7 @@ class NODE:
             # than the CEO's rendered sections. Their named output still belongs
             # to the recorded execution workspace.
             block = task_md
+            inline_contract = True
         # Only enforce the machine-readable format when explicitly requested.
         # Older contracts allow annotated manifests; later amendments win.
         plain_manifest = False
@@ -752,10 +765,15 @@ class NODE:
             item = raw.strip().lstrip("-*• ").strip()
             if not item:
                 continue
-            m = re.search(r'(?:[A-Za-z]:[\\/][^\s，。；;"\']+|[\w\-./\\]+\.[A-Za-z0-9]{1,6})', item)
+            # In inline prose, Chinese action words are not part of an ASCII
+            # filename ("叶子B实现report.py"). Unicode filenames remain valid
+            # in declared deliverables, absolute paths and quoted references.
+            relative = r'[A-Za-z0-9_\-./\\]+' if inline_contract else r'[\w\-./\\]+'
+            quoted = r'[`"\'][\w\-./\\]+\.[A-Za-z0-9]{1,6}[`"\']'
+            m = re.search(r'(?:[A-Za-z]:[\\/][^\s，。；;"\']+|' + quoted + '|' + relative + r'\.[A-Za-z0-9]{1,6})', item)
             if not m:
                 continue
-            token = m.group(0).strip('.,;，。、"')
+            token = m.group(0).strip('`\'.,;，。、"')
             candidate = Path(token)
             if not candidate.is_absolute():
                 candidate = Path(workspace or ".") / candidate

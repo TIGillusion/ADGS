@@ -95,6 +95,37 @@ def task_section(task, title):
     return match.group(1).strip() if match else ""
 
 
+def delegation_restriction(task):
+    """Recognize direct instructions to this execution, not rules for its children."""
+    task = str(task or "")
+    if task_section(task, "当前任务"):
+        task = "\n".join(task_section(task, title) for title in (
+            "当前任务", "需求明细", "权限告知", "上层补充要求（保留原权限）"))
+    task = re.sub(r"```[\s\S]*?```", "", task)
+    task = "\n".join(line for line in task.splitlines() if not line.lstrip().startswith(">"))
+    restricted = False
+    own = r"(?:(?:你|本任务|本节点|本执行(?:实例)?)(?:现在)?\s*)?"
+    action = r"(?:委派|派发|拆分)"
+    for clause in re.split(r"[。；;\n]|\.\s+(?=(?:do not|must not|never)\b)", task, flags=re.I):
+        clause = re.sub(r"^\s*(?:[-*]\s*|\d+[.)、]\s*)?", "", clause).strip()
+        clause = re.sub(r"^(?:【硬性禁令】|硬性禁令[:：]|本任务约束[:：])\s*", "", clause)
+        if (re.match(own + r"(?:不得|禁止|严禁|不允许|不要)(?:再|继续|向下)?" + action, clause)
+                or re.match(r"(?:you\s+)?(?:do not|must not|never)\s+(?:delegate|spawn)\b", clause, re.I)):
+            restricted = True
+        elif re.match(own + r"允许(?:再|继续|向下)?" + action, clause):
+            restricted = False
+    return "本任务明确禁止继续委派子任务，请在当前执行中完成并汇报" if restricted else None
+
+
+def delegated_task_error(task):
+    """A connectivity placeholder is not a contract for a new worker instance."""
+    task = str(task or "").strip()
+    if (re.fullmatch(r"test|ping|smoke test|测试|占位测试", task, re.I)
+            or re.fullmatch(r"(?:smoke\s+test\s+)?placeholder\s*[-:：]?\s*(?:will\s+be\s+replaced|to\s+be\s+replaced|待替换)", task, re.I)):
+        return "不能派发连通性占位任务；请先提供正式任务书。只读连通性/候选检查请使用 list_nodes 和 probe_node。"
+    return None
+
+
 def evidence_excerpt(text, budget):
     """Preserve the conclusion at the end, alongside the beginning of an evidence log."""
     text = str(text or "")

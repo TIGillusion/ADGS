@@ -478,8 +478,16 @@ def api_chat():
 
 # 任务队列：当前任务结束后自动执行下一个（/queue 功能）
 # 条目：{"id": 稳定标识, "text", "session", "workspace", "queued_at", "mode": queue|interrupt}
-_queue = []            # 待执行消息（FIFO）
+from core.message_queue import DurableMessageQueue
+_queue = DurableMessageQueue(Path(os.environ.get(
+    "ADGS_STATE_DIR", str(ROOT / ".adgs_runtime"))) / "pending_messages.json")
 _queue_lock = threading.Lock()
+
+
+def _checkpoint_queue_locked():
+    checkpoint = getattr(_queue, "checkpoint", None)
+    if checkpoint:
+        checkpoint()
 
 
 def _queue_snapshot(session=None):
@@ -633,11 +641,19 @@ def _mesh_delegate_impl(child_node_id: str, task_md: str, parent_execution_id: s
     task_md = str(task_md or "").strip()
     if not child_node_id or not task_md or not parent_execution_id:
         return {"ok": False, "error": "child_node_id / task_md / parent_execution_id 必填"}
+    from core.contracts import delegated_task_error
+    contract_error = delegated_task_error(task_md)
+    if contract_error:
+        return {"ok": False, "error": contract_error}
     if registry.get(child_node_id) is None:
         return {"ok": False, "error": f"节点 {child_node_id} 不在种群中"}
     parent = execution_store.get(parent_execution_id)
     if not parent:
         return {"ok": False, "error": "父执行不存在（深度/预算不可继承）"}
+    from core.contracts import delegation_restriction
+    restriction = delegation_restriction(parent.get("task_md", ""))
+    if restriction:
+        return {"ok": False, "error": restriction}
     if parent.get("depth", 0) >= config.max_delegation_depth:
         return {"ok": False,
                 "error": f"已达最大委派深度 {config.max_delegation_depth}，请自己完成"}
@@ -1347,6 +1363,7 @@ def api_queue_guide(item_id):
             if item is None:
                 return jsonify(ok=False, error="消息已被处理或撤销"), 404
             item["mode"] = "interrupt"
+            _checkpoint_queue_locked()
             session = item.get("session")
             start_now = not _session_busy(session)
             if start_now:
@@ -1380,6 +1397,7 @@ def api_queue_update(item_id):
             if isinstance(t, dict) and t.get("id") == item_id:
                 old = t["text"]
                 t["text"] = text
+                _checkpoint_queue_locked()
                 break
         else:
             return jsonify({"ok": False,
@@ -1493,7 +1511,7 @@ def _start_task(text: str, sess_name=None, workspace=None, mode="queue", *, allo
                     return {"ok": False, "error": "无法确认当前执行会话", "http_status": 409}
             with _queue_lock:
                 item = {"id": uuid.uuid4().hex[:12], "text": text, "session": session, "mode": mode,
-                        "workspace": ws, "queued_at": time.time()}
+                        "workspace": str(ws), "queued_at": time.time()}
                 _queue.append(item)
                 position = len(_queue)
             try:
@@ -2288,6 +2306,10 @@ def _bootstrap_runtime():
     with _bootstrap_lock:
         if _bootstrapped:
             return
+        with _queue_lock:
+            activate_queue = getattr(_queue, "activate", None)
+            if activate_queue:
+                activate_queue()
         for name, target in (("adgs-evolution", _startup_evolve),
                              ("adgs-autosave", _session_save_listener)):
             if name in _bootstrap_started:

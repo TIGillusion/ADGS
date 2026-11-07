@@ -8,6 +8,11 @@ from pathlib import Path
 def install_role_tools():
     import model_tools
     from agent import tool_executor
+    try:
+        from .tool_bridge_compat import install_bridge_compat
+    except ImportError:  # Hermes loads ADGS hooks from the core PYTHONPATH.
+        from tool_bridge_compat import install_bridge_compat
+    install_bridge_compat()
 
     schemas_file = os.environ.get("ADGS_CONTROL_TOOLS")
     decision_file = os.environ.get("ADGS_CONTROL_DECISION")
