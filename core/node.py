@@ -337,6 +337,10 @@ class NODE:
 
     def _save_result(self, result):
         result = dict(result or {})
+        if not result.get("session_id"):
+            checkpoint = execution_store.get(self._execution_id) or {}
+            if checkpoint.get("node_id") == self.node_id and checkpoint.get("profile") == self.profile:
+                result["session_id"] = checkpoint.get("session_id")
         result.update(execution_id=self._execution_id, node_id=self.node_id, profile=self.profile,
                       task_id=self._work_task_id, run_id=self._run_id)
         result.setdefault("outcome", "passed" if result.get("success") else
@@ -404,7 +408,7 @@ class NODE:
         saved = {**saved, "task_md": task_md}
         self._parent_cancel = parent_cancel
         self._prepare_execution(task_md, task_id or saved["task_id"], execution_id,
-                                run_id or saved.get("run_id"), timeout, saved.get("workspace"))
+                                run_id or saved.get("run_id"), timeout, saved.get("workspace"), depth=saved.get("depth", 0))
         self._credit_revision = True
         self._prior_evidence = (saved.get("result") or {}).get("work_log") or saved.get("work_log", "")
         self._workspace = saved.get("workspace") or config.workspace
@@ -427,9 +431,9 @@ class NODE:
                 if decision_only and grant:
                     execution_store.put(execution_id, decision_pending=False)
                     log = self._run_hermes(task_md, timeout)
-                    result = self._complete_execution(task_md, log, "ceo", True)
+                    result = self._complete_execution(task_md, log, saved.get("upper") or "ceo", True)
                 elif decision_only:
-                    result = self._work_inner(task_md, "", "ceo", timeout, 0, True, self._work_task_id)
+                    result = self._work_inner(task_md, "", saved.get("upper") or "ceo", timeout, saved.get("depth", 0), True, self._work_task_id)
                 elif delegated:
                     result = self._continue_delegation(saved, instruction)
                 else:
@@ -437,7 +441,7 @@ class NODE:
                     # Reinjecting the entire cumulative task on every resume
                     # grows context quadratically and can prevent any tool work.
                     log = self._resume_hermes(self._continuation_instruction(task_md, instruction), session_id)
-                    result = self._complete_execution(task_md, log, "ceo", True)
+                    result = self._complete_execution(task_md, log, saved.get("upper") or "ceo", True)
                 return self._save_result(result)
             except Exception as exc:
                 self._emit_terminal_status(self._work_task_id, False, infra=True,
@@ -638,6 +642,7 @@ class NODE:
 - 委派（delegate_to_node）：把一个边界清晰的子任务（含目标/要求/验收标准/交付物/允许写入范围）
   委派给指定节点；第一参数 parent_execution_id 填你的执行 ID；立即返回回执，不阻塞。
 - 跟进（wait_delegation）：等待委派结果；未完成返回进度可再次调用，完成返回子节点汇报。
+- 续接（continue_delegation）：同一任务的连续上下文补工/返工，保留原 delegation/execution/Hermes 会话，只增加子输入轮次；新上下文独立工作才重新 delegate_to_node。
 - 复核（report_delegation_verdict）：审阅子节点汇报后给出验收判定，驱动其进化分。
 
 协作纪律：
@@ -751,14 +756,27 @@ class NODE:
             return "交付物清单无可核验的文件路径，跳过机械核验。"
         return f"机械核验 {checked} 项交付物路径：\n" + "\n".join(lines)
 
+    def _pending_children_result(self, task_md, log):
+        pending = [c["execution_id"] for c in execution_store.children(getattr(self, "_execution_id", ""))
+                   if c.get("state") in {"running", "queued"}]
+        if not pending:
+            return None
+        result = self._unjudged(task_md, log, "unjudged",
+            "协调者进程已返回，但下属仍在执行或排队，尚不能验收完成。请续接原父会话等待汇报并复核，不要取消或重派下属：" + ", ".join(pending))
+        result["infra_failure"] = False
+        return result
+
     def _independent_acceptance(self, task_md: str, output: str,
-                                self_reported, summary) -> dict:
+                                self_reported, summary, session_id=None) -> dict:
         """独立验收（merged 模式）：申报≠验收，验收权在 AGENT 复核层。
 
         worker 自评只是申报；AGENT.evaluate 对照任务书逐条判定（旧模式固有的
         验收层，merged 改造时曾被绕过——depth=0 任务一度变成自己给自己打分，
         半成品也会被"按产出推断 passed"，2026-10-24 T9 实测漏判）。
         返回 {passed, evaluation, summary}；验收官不可用时返回 unjudged 结果。"""
+        pending = self._pending_children_result(task_md, {"output": output, "session_id": session_id})
+        if pending:
+            return {"unjudged_result": pending}
         mech = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
         missing = [line[2:] for line in mech.splitlines() if line.startswith("- 缺失: ")]
         review_input = (str(output or "")[-9000:] + "\n\n【系统机械核验】\n本执行工作区：" +
@@ -774,7 +792,7 @@ class NODE:
             # 验收官自身不可用（协议/超时/infra）：这是验收侧故障，不是 worker 的
             # 协议错误——如实标 unjudged，成果保留待核实，不推断成败。
             return {"unjudged_result": self._unjudged(
-                task_md, {"output": output}, "unjudged",
+                task_md, {"output": output, "session_id": session_id}, "unjudged",
                 f"独立验收不可用（申报为 {self_reported or '缺失'}）: {str(review.get('detail', ''))[:200]}。"
                 f"成果保留待核实，不作为成功计入。")}
         passed = bool(review.get("passed")) and not missing
@@ -858,7 +876,7 @@ class NODE:
             # review or continue this execution instead of silently aborting.
             result['infra_failure'] = False
             return result
-        verdict = self._independent_acceptance(task_md, output, outcome, summary)
+        verdict = self._independent_acceptance(task_md, output, outcome, summary, session_id=session_id)
         if verdict.get("unjudged_result"):
             return verdict["unjudged_result"]
         passed = verdict["passed"]
@@ -962,6 +980,9 @@ class NODE:
                         "新增要求只能用本轮新增证据验收]\n" + self._prior_evidence +
                         "\n\n[续接执行的新证据]\n" + evidence)
         while True:
+            pending = self._pending_children_result(task_md, log)
+            if pending:
+                return pending
             if hasattr(self, "_execution_id"):
                 execution_store.put(self._execution_id, phase="acceptance")
             self.agent.append_history("user", "[执行证据]\n" + evidence_excerpt(evidence, 5000))
@@ -969,13 +990,19 @@ class NODE:
             eval_args = {"old_score": old_score, "context_brief": self.agent.history_brief()}
             if isinstance(self.agent, AGENT):
                 eval_args["timeout"] = min(config.worker_timeout, max(0, self._deadline - time.monotonic()))
-            evaluation = self.agent.evaluate(task_md, evidence, **eval_args)
+            mechanical = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
+            missing = [line[2:] for line in mechanical.splitlines() if line.startswith("- 缺失: ")]
+            evaluation = self.agent.evaluate(task_md, evidence + "\n\n【当前系统机械核验】\n" + mechanical, **eval_args)
             if evaluation.get("unjudged"):
                 result = self._unjudged(task_md, log, evaluation.get("outcome", "evaluation_unavailable"),
                                         evaluation.get("detail", "验收不可用"))
                 result.update(evaluation=evaluation, work_log=evidence)
                 bus.emit("node.eval", node=self.node_id, profile=self.profile, **evaluation)
                 return result
+            if missing:
+                evaluation = {**evaluation, "passed": False, "score": old_score, "raw_score": min(0, evaluation.get("raw_score") or 0),
+                              "failed_items": [*(evaluation.get("failed_items") or []), *missing],
+                              "detail": str(evaluation.get("detail") or "") + "；系统机械核验缺失：" + "；".join(missing)}
             if evaluation.get("passed") or reworks >= config.rework_limit or not log.get("session_id"):
                 break
             reworks += 1

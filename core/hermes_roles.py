@@ -43,7 +43,7 @@ def install_role_tools():
         denied = bool(schemas and ref.name not in names)
         if not schemas and coordinator_file and Path(coordinator_file).is_file():
             allowed = {"read_file", "search_files", "list_files", "tool_search", "tool_describe"}
-            mesh = ("list_nodes", "probe_node", "delegate_to_node", "wait_delegation",
+            mesh = ("list_nodes", "probe_node", "delegate_to_node", "continue_delegation", "wait_delegation",
                     "report_delegation_verdict", "escalate_delegation_verdict")
             denied = ref.name not in allowed and not any(ref.name.endswith("__" + name) for name in mesh)
         if denied:

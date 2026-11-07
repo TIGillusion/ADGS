@@ -57,6 +57,14 @@ class ExecutionStore:
             row = conn.execute("SELECT payload FROM executions WHERE id=?", (execution_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def children(self, parent_execution_id):
+        if not parent_execution_id:
+            return []
+        with self.lock, self._connect() as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM executions WHERE json_extract(payload,'$.parent_execution_id')=?",
+                (parent_execution_id,))]
+
     def put(self, execution_id, **fields):
         with self.lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

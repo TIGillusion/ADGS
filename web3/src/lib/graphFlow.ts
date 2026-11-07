@@ -231,7 +231,8 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
     append(b.key); opToOwner(ownerKey);
   } else if (event.type === "a2a.delegate") {
     const did = str(d.delegation_id); if (!did || !nodeId) return previous;
-    let b = get(f.delegationBatch[did]);
+    const continuation = d.context_mode === "continue";
+    let b = continuation ? undefined : get(f.delegationBatch[did]);
     if (!b) {
       const ownerKey = owner(); b = batch(ownerKey, str(d.batch_id) || did);
       f.delegationBatch[did] = b.key; opToOwner(ownerKey);
@@ -242,7 +243,10 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
       const n = attach(b, nodeId, childExecution, childTask, text(d));
       f.taskBatch[childTask] = b.key;
       contract(b, { id: did, nodeId, executionId: childExecution || undefined, instanceKey: n.key, taskId: childTask, input: text(d) });
-      addInput(n, text(d), `initial-${childExecution || childTask}`);
+      // The authoritative graph.instruction adds exactly one continued input.
+      // Reusing the initial token here would overwrite the original task text.
+      if (!continuation) addInput(n, text(d), `initial-${childExecution || childTask}`);
+      else n.status = "waiting";
     }
     append(b.key);
     for (const c of b.extra.contracts ?? []) {

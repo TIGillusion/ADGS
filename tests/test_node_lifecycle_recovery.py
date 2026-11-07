@@ -27,18 +27,19 @@ def node_runtime(tmp_path, monkeypatch):
     return runtime, node, store
 
 
-@pytest.mark.parametrize("failure", ["budget", "checkpoint"])
+@pytest.mark.parametrize("failure", ["score", "checkpoint"])
 def test_prepare_failure_releases_execution_claim_for_same_id_retry(node_runtime, monkeypatch, failure):
     runtime, node, store = node_runtime
     original_put = store.put
-    if failure == "budget":
-        node._compute_timeouts = Mock(side_effect=ValueError("bad budget"))
+    original_get = node.reg.get
+    if failure == "score":
+        node.reg.get = Mock(side_effect=ValueError("invalid score snapshot"))
     else:
         monkeypatch.setattr(store, "put", Mock(side_effect=OSError("checkpoint unavailable")))
     with pytest.raises((OSError, ValueError)):
         node._prepare_execution("contract", "task", "same-id", workspace="fixture")
     assert "same-id" not in runtime._ACTIVE_EXECUTIONS
-    node._compute_timeouts = lambda *a: (30, 20)
+    node.reg.get = original_get
     monkeypatch.setattr(store, "put", original_put)
     node._prepare_execution("contract", "task", "same-id", workspace="fixture")
     assert store.get("same-id")["state"] == "running"

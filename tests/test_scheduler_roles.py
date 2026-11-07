@@ -66,7 +66,7 @@ def test_coordinator_blocks_code_but_can_wait_and_read(tmp_path, monkeypatch):
     flag.touch()
     invoke("terminal")
     assert "协调" in calls[-1]["scope_block"]
-    for name in ("read_file", "tool_search", "tool_describe", "mcp__mesh__wait_delegation", "mcp__mesh__delegate_to_node"):
+    for name in ("read_file", "tool_search", "tool_describe", "mcp__mesh__wait_delegation", "mcp__mesh__delegate_to_node", "mcp__mesh__continue_delegation"):
         invoke(name)
         assert calls[-1]["scope_block"] is None
     executor._dispatch_authorized_once(None, None, SimpleNamespace(name="tool_call"), scope_block="Missing task_md; retry with the required schema")

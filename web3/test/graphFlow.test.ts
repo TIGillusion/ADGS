@@ -35,6 +35,20 @@ describe('统一输入轮次与派发批次',()=>{
   expect(tasks(g,'round-1')).toHaveLength(2);expect(g.flow?.links).toHaveLength(1);
   expect(rounds(g,instances(g)[0].key)[1].extra.user_text).toBe('请修复缺项');
  });
+ it('MCP原委派返工保留原输入和历史批次，两次并行续接共用新批次',()=>{
+  const parent='a@e1';
+  const initial=[user(),prepare('t1','e1','s1'),dispatch('t1','e1','a'),
+   event('a2a.delegate',{delegation_id:'did1',node:'b',child_execution_id:'e2',parent:'a',parent_execution_id:'e1',batch_id:'first',status:'running',summary:'原始任务B'}),
+   event('a2a.delegate',{delegation_id:'did2',node:'c',child_execution_id:'e3',parent:'a',parent_execution_id:'e1',batch_id:'first',status:'running',summary:'原始任务C'})];
+  const g=fold([...initial,
+   ...['b','c'].map((node,i)=>event('a2a.delegate',{delegation_id:`did${i+1}`,node,child_execution_id:`e${i+2}`,parent:'a',parent_execution_id:'e1',batch_id:'rework',context_mode:'continue',status:'running',summary:`修正${node}`})),
+   ...['b','c'].map((node,i)=>event('graph.instruction',{node,execution_id:`e${i+2}`,task_id:`mesh_did${i+1}`,parent:'a',parent_execution_id:'e1',batch_id:'rework',context_mode:'continue',instruction_id:`fix${node}`,instruction:`修正${node}`}))]);
+  expect(instances(g)).toHaveLength(3);expect(rounds(g,'ceo')).toHaveLength(1);expect(rounds(g,parent)).toHaveLength(1);
+  expect(rounds(g,'b@e2').map(r=>r.extra.user_text)).toEqual(['原始任务B','修正b']);
+  const batches=tasks(g,rounds(g,parent)[0].key);expect(batches).toHaveLength(2);
+  expect(batches[0].extra.contracts?.map(c=>c.input)).toEqual(['原始任务B','原始任务C']);
+  expect(batches[1].extra.contracts).toHaveLength(2);
+ });
  it('同一个种群ID的新execution产生新实例，各自输入轮次独立',()=>{
   const g=fold([user(),prepare('t1','e1','s1'),dispatch('t1','e1','a'),prepare('t2','e2','s2'),dispatch('t2','e2','a')]);
   expect(instances(g).map(n=>n.extra.execution_id)).toEqual(['e1','e2']);

@@ -39,11 +39,13 @@ def test_continuation_keeps_identity_and_records_only_new_instruction(monkeypatc
     node, bus, writes = fixture_node(monkeypatch)
     saved = dict(node_id='worker', profile='worker', session_id='hermes-context',
                  task_md='原任务', task_id='task', run_id='run', session_name='isolated',
-                 upper='parent', parent_execution_id='parent-execution')
+                 upper='parent', parent_execution_id='parent-execution',depth=2)
     monkeypatch.setattr(module.execution_store, 'get', lambda execution: saved)
     received = []
+    prepared=[];uppers=[]
+    node._prepare_execution=lambda *a,**kw:prepared.append(kw)
     node._resume_hermes = lambda instruction, session: received.append((instruction, session)) or {}
-    node._complete_execution = lambda *a: {'success': True}
+    node._complete_execution = lambda *a: uppers.append(a[2]) or {'success': True}
     instruction = '请继续修复，保留已有成果' * 1000
     node.continue_execution('execution', instruction)
     event = bus.history()[-1]
@@ -52,3 +54,5 @@ def test_continuation_keeps_identity_and_records_only_new_instruction(monkeypatc
     assert event['data']['execution_id'] == 'execution'
     assert event['data']['parent_execution_id'] == 'parent-execution'
     assert received[0][1] == 'hermes-context'
+    assert prepared[0]['depth']==2
+    assert uppers==['parent']

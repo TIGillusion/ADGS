@@ -555,12 +555,33 @@ def _load_delegations():
             data = json.loads(f.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 _mesh_delegations.update(data)
+                changed = False
+                # A new runtime has no threads for an old in-flight record.
+                # Reconcile durable results or make the original resumable;
+                # leaving it running would make wait/continue loop forever.
+                for record in data.values():
+                    if not isinstance(record, dict) or record.get("status") != "running":
+                        continue
+                    from core.node import active_cancel
+                    eid = record.get("child_execution_id")
+                    if eid and active_cancel(eid) is not None:
+                        continue
+                    child = execution_store.get(eid) if eid else None
+                    result = (child or {}).get("result") or {}
+                    state = (child or {}).get("state")
+                    summary, outputs = _mesh_summary_of(result)
+                    record.update(status=state if state in {"passed", "failed", "blocked"} else "interrupted",
+                                  summary=summary or "运行时重启中断了等待；原执行与成果已保留，可 continue_delegation 恢复",
+                                  deliverables=outputs, ended_at=(child or {}).get("ended_at") or time.time())
+                    changed = True
                 # Old executions delegated before coordinator markers existed.
                 parents = {r.get("parent_execution_id") for r in data.values() if isinstance(r, dict)}
                 for parent_id in parents - {None, ""}:
                     saved = execution_store.get(parent_id)
                     if saved and not saved.get("coordinator"):
                         execution_store.put(parent_id, coordinator=True)
+                if changed:
+                    _persist_delegations()
     except (OSError, ValueError):
         pass
 
@@ -569,12 +590,11 @@ def _persist_delegations():
     """委派档案落盘（每次状态变更后调用；原子写）。"""
     try:
         with _mesh_lock:
-            snapshot = dict(_mesh_delegations)
-        f = _mesh_delegations_file()
-        f.parent.mkdir(parents=True, exist_ok=True)
-        tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(f)
+            f = _mesh_delegations_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".json." + uuid.uuid4().hex + ".tmp")
+            tmp.write_text(json.dumps(_mesh_delegations, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(f)
     except (OSError, ValueError, TypeError):
         pass
 # Waiting parents must not consume every thread before descendants can start.
@@ -659,6 +679,68 @@ def _mesh_delegate_impl(child_node_id: str, task_md: str, parent_execution_id: s
                  status='interrupted', summary='委派启动失败，原任务仍由上级保留', session=parent.get('session_name'))
         return {'ok':False,'error':'委派未能启动，原任务仍由上级保留'}
     return {"ok": True, "delegation_id": delegation_id, "child_node_id": child_node_id}
+
+
+def _mesh_continue_impl(parent_execution_id: str, delegation_id: str, instruction: str) -> dict:
+    """A parent adds a new input to its own child's existing execution/session."""
+    instruction = str(instruction or "").strip()
+    if not parent_execution_id or not delegation_id or not instruction:
+        return {"ok": False, "error": "parent_execution_id / delegation_id / instruction 必填"}
+    parent = execution_store.get(parent_execution_id)
+    if not parent:
+        return {"ok": False, "error": "原父执行不存在"}
+    from core.node import active_cancel
+    from core.scheduling import resources_conflict
+    with _mesh_lock:
+        record = _mesh_delegations.get(delegation_id)
+        if not record or record.get("parent_execution_id") != parent_execution_id:
+            return {"ok": False, "error": "委派不属于当前父执行"}
+        eid = record.get("child_execution_id")
+        child = execution_store.get(eid) if eid else None
+        if not child or child.get("parent_execution_id") != parent_execution_id:
+            return {"ok": False, "error": "原子执行不存在或上级关系不匹配"}
+        if record.get("status") == "running" or active_cancel(eid) is not None:
+            return {"ok": False, "error": "原委派仍在执行或排队，请先 wait_delegation"}
+        session_id = child.get("session_id") or (child.get("result") or {}).get("session_id")
+        if not session_id and (child.get("result") or {}).get("action") != "split_tasks":
+            from core.execution_store import preworker_attempts_safe, preworker_resume_evidence
+            from core.terminal_runtime import terminal_store
+            if not (preworker_resume_evidence(child) and preworker_attempts_safe(terminal_store.list_attempts(execution_id=eid))):
+                return {"ok": False, "error": "原执行缺少可恢复的 Hermes 会话或启动前检查点"}
+        if child.get("node_id") != record.get("child_node_id") or child.get("workspace") != parent.get("workspace"):
+            return {"ok": False, "error": "原节点或工作区关系不匹配"}
+        live = [r for r in _mesh_delegations.values() if r.get("status") == "running"]
+        if len(live) >= _MESH_PENDING_CAP:
+            return {"ok": False, "error": "在途委派已达上限，请先等待下属汇报"}
+        resources = frozenset(record.get("shared_resources") or [])
+        if any(r.get("parent_execution_id") == parent_execution_id and resources_conflict(resources, frozenset(r.get("shared_resources") or [])) for r in live):
+            return {"ok": False, "error": "相同外部资源已有进行中的委派，请先 wait_delegation"}
+        round_id = parent.get("interaction_round_id")
+        batch_id = next((r["batch_id"] for r in live if r.get("parent_execution_id") == parent_execution_id
+                         and r.get("parent_round_id") == round_id and r.get("batch_id")), None) or uuid.uuid4().hex
+        record.setdefault("previous_results", []).append({k: record.get(k) for k in ("status", "summary", "verdict", "ended_at", "batch_id", "last_instruction")})
+        record.update(status="running", summary="", deliverables=[], verdict=None, ended_at=None,
+                      last_instruction=instruction, resume_count=record.get("resume_count", 0)+1,
+                      batch_id=batch_id, parent_round_id=round_id)
+    _persist_delegations()
+    bus.emit("a2a.delegate", delegation_id=delegation_id, node=record["child_node_id"], parent=parent.get("node_id"),
+             parent_execution_id=parent_execution_id, child_execution_id=eid, batch_id=batch_id,
+             parent_round_id=round_id, context_mode="continue", status="running", summary=instruction,
+             session=parent.get("session_name"))
+    try:
+        _MESH_POOL.submit(_mesh_run_child, delegation_id, record["child_node_id"], record["task_md"],
+                          parent_execution_id, resume_instruction=instruction)
+    except Exception as exc:
+        with _mesh_lock:
+            record.update(status="interrupted", summary=f"原委派恢复启动失败: {type(exc).__name__}", ended_at=time.time())
+            _mesh_lock.notify_all()
+        _persist_delegations()
+        bus.emit("a2a.delegate", delegation_id=delegation_id, node=record["child_node_id"], parent=parent.get("node_id"),
+                 parent_execution_id=parent_execution_id, child_execution_id=eid, batch_id=batch_id,
+                 status="interrupted", summary=record["summary"], session=parent.get("session_name"))
+        return {"ok": False, "error": "原委派恢复未能启动，已保留原执行和历史结果"}
+    return {"ok": True, "delegation_id": delegation_id, "child_execution_id": eid,
+            "child_node_id": record["child_node_id"], "session_id": session_id}
 
 
 def _mesh_wait_impl(delegation_id: str, wait: float) -> dict:
@@ -945,6 +1027,7 @@ def _mesh_provider():
     return {"directory": _mesh_directory_impl,
             "probe": _mesh_probe_impl,
             "delegate": _mesh_delegate_impl,
+            "continue_delegation": _mesh_continue_impl,
             "wait": _mesh_wait_impl,
             "verdict": _mesh_verdict_impl,
             "escalate": _mesh_escalate_impl}
@@ -1033,7 +1116,7 @@ def _mesh_summary_of(result):
     return summary, [str(d) for d in deliverables][:20]
 
 
-def _mesh_run_child(delegation_id, child_node_id, task_md, parent_execution_id):
+def _mesh_run_child(delegation_id, child_node_id, task_md, parent_execution_id, *, resume_instruction=None):
     """线程体：在子节点上执行委派任务，结束写回注册表并唤醒等待者。"""
     record = _mesh_delegations.get(delegation_id, {})
     parent = {}
@@ -1041,14 +1124,20 @@ def _mesh_run_child(delegation_id, child_node_id, task_md, parent_execution_id):
         parent = execution_store.get(parent_execution_id) or {}
         parent_depth = int(parent.get("depth", 0))
         from core.node import NODE, active_cancel
-        with session_scope(parent.get("session_name"), parent.get("workspace")), event_scope(session=parent.get("session_name")):
-            result = NODE(child_node_id).work(
-                task_md, upper=record.get("parent_node_id", "mesh"),
-                timeout=None, depth=parent_depth + 1,
-                task_id=f"mesh_{delegation_id[:8]}", execution_id=record.get("child_execution_id"),
-                run_id=parent.get("run_id"),
-                parent_cancel=active_cancel(parent_execution_id),
-                workspace=parent.get("workspace"), parent_execution_id=parent_execution_id)
+        with session_scope(parent.get("session_name"), parent.get("workspace")), event_scope(session=parent.get("session_name"), batch_id=record.get("batch_id")):
+            node = NODE(child_node_id)
+            if resume_instruction is not None:
+                child = execution_store.get(record["child_execution_id"]) or {}
+                result = node.continue_execution(record["child_execution_id"], resume_instruction,
+                    task_id=child.get("task_id"), run_id=child.get("run_id"), parent_cancel=active_cancel(parent_execution_id))
+            else:
+                result = node.work(
+                    task_md, upper=record.get("parent_node_id", "mesh"),
+                    timeout=None, depth=parent_depth + 1,
+                    task_id=f"mesh_{delegation_id[:8]}", execution_id=record.get("child_execution_id"),
+                    run_id=parent.get("run_id"),
+                    parent_cancel=active_cancel(parent_execution_id),
+                    workspace=parent.get("workspace"), parent_execution_id=parent_execution_id)
         status = "passed" if result.get("success") and result.get("outcome") == "passed" else \
                  result.get("outcome") if result.get("outcome") in ("blocked", "failed") else "interrupted"
         summary, deliverables = _mesh_summary_of(result)
@@ -1058,12 +1147,14 @@ def _mesh_run_child(delegation_id, child_node_id, task_md, parent_execution_id):
         record.update({"status": status, "summary": summary, "deliverables": deliverables,
                        "ended_at": time.time()})
         _mesh_delegations[delegation_id] = record
+        # Publish this result before a waiter can begin a new continuation of
+        # the same record; its batch and status belong to this attempt.
+        bus.emit("a2a.delegate", delegation_id=delegation_id, node=record.get("child_node_id"),
+                 parent=record.get("parent_node_id"), parent_execution_id=parent_execution_id,
+                 child_execution_id=record.get("child_execution_id"), batch_id=record.get("batch_id"),
+                 status=status, summary=summary, session=parent.get("session_name"))
         _mesh_lock.notify_all()
     _persist_delegations()
-    bus.emit("a2a.delegate", delegation_id=delegation_id, node=record.get("child_node_id"),
-             parent=record.get("parent_node_id"), parent_execution_id=parent_execution_id,
-             child_execution_id=record.get("child_execution_id"), batch_id=record.get("batch_id"),
-             status=status, summary=summary, session=parent.get("session_name"))
 
 
 @app.post("/internal/mesh/delegations")
@@ -1087,6 +1178,17 @@ def internal_mesh_wait(delegation_id):
         wait = 0.0
     body = _mesh_wait_impl(delegation_id, wait)
     return jsonify(body), 200 if body.get("ok") else 404
+
+
+@app.post("/internal/mesh/delegations/<delegation_id>/continue")
+def internal_mesh_continue(delegation_id):
+    if not _mesh_auth():
+        return jsonify(ok=False, error="协作令牌无效"), 401
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="请求体必须是 JSON 对象"), 400
+    result = _mesh_continue_impl(data.get("parent_execution_id"), delegation_id, data.get("instruction"))
+    return jsonify(result), 200 if result.get("ok") else 409
 
 
 @app.post("/internal/mesh/delegations/<delegation_id>/verdict")

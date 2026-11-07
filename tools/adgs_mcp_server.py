@@ -43,6 +43,7 @@ class MeshProvider:
         self.directory = Callable[[], dict]  # noqa: 仅类型提示占位
         self.probe = Callable[[str, str], dict]
         self.delegate = Callable[[str, str, str, list], dict]
+        self.continue_delegation = Callable[[str, str, str], dict]
         self.wait = Callable[[str, float], dict]
         self.verdict = Callable[[str, bool, str, float], dict]
         self.escalate = Callable[[str, str, bool, str, float], dict]
@@ -168,6 +169,22 @@ def delegate_to_node(parent_execution_id: str, node_id: str, task_md: str,
 
 
 @mcp.tool()
+def continue_delegation(parent_execution_id: str, delegation_id: str, instruction: str) -> str:
+    """连续上下文返工/恢复自己的原委派，保留原节点、execution 和 Hermes 会话。
+
+    仅用于同一任务补证据、修正缺项或继续工作；独立新上下文用 delegate_to_node。
+    原委派必须已返回（含 passed/failed/interrupted），不能重复恢复正在执行或排队的任务。
+    新输入增加子节点轮次，父轮次不变。返回后仍用原 delegation_id 调 wait_delegation，
+    汇报返回后重新 report_delegation_verdict。不要重复派发整份已完成任务。
+    """
+    data = _call("continue_delegation", parent_execution_id, delegation_id, instruction)
+    if not data.get("ok"):
+        raise RuntimeError(data.get("error") or "原委派恢复被拒绝")
+    return (f"原委派已续接：delegation_id={data['delegation_id']}，execution_id={data['child_execution_id']}；"
+            "保留原节点与 Hermes 上下文。请 wait_delegation 等待本次汇报。")
+
+
+@mcp.tool()
 def wait_delegation(delegation_id: str, timeout_s: int = 120) -> str:
     """等待/跟进一个委派的结果。完成时返回子节点的完整汇报；未完成时返回当前
     进度（可再次调用继续等待，或先并行处理别的事务）。timeout_s 上限 150 秒。"""
@@ -208,7 +225,7 @@ def report_delegation_verdict(delegation_id: str, passed: bool, note: str = "",
     applied = data.get("applied")
     detail = f"（分数修正 {applied:+.1f}）" if applied is not None else ""
     return (f"已记录复核判定（节点 {child}：{'通过' if passed else '未通过'}{detail}）。"
-            + ("" if passed else " 如该子任务仍需补救，可再次 delegate_to_node 并附上 note 作为返工要求。"))
+            + ("" if passed else " 连续上下文补救请用 continue_delegation 并附上 note；新上下文独立工作才用 delegate_to_node。"))
 
 
 @mcp.tool()
