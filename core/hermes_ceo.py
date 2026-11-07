@@ -66,14 +66,21 @@ class HermesCEOChat(CHAT):
             if result.get("session_id"):
                 ceo._hermes_session_id = result["session_id"]
             receipt = terminal_store.paths(eid, aid) / "ceo-decision.json"
-            if result.get("exit_code") != 0 or not receipt.is_file():
+            if result.get("exit_code") != 0:
                 ceo._set_activity("interrupted")
                 return {"error": result.get("error") or "CEO Hermes 未提交决策",
                         "error_kind": "provider_error", "tool_calls": []}
-            action = json.loads(receipt.read_text(encoding="utf-8"))
             ceo._hermes_input_count = len(encoded)
             ceo._hermes_input_hash = hashlib.sha256("\n".join(encoded).encode()).hexdigest()
             ceo._set_activity("reviewing", attempt_id=aid)
+            if not receipt.is_file():
+                # A normal prose reply is a missing tool decision, not a provider
+                # outage. The durable CEO loop already repairs protocol failures
+                # with a bounded retry and retains this same Hermes conversation.
+                return {"error": "CEO Hermes 仅返回说明文字，尚未提交工具决策",
+                        "error_kind": "protocol_error", "tool_calls": [],
+                        "content": str(result.get("output") or "")[-12000:]}
+            action = json.loads(receipt.read_text(encoding="utf-8"))
             return {"tool_calls": [{"id": "ceo-" + aid, **action}]}
         except Exception as exc:
             detail = str(exc).replace(client.api_key, "[已隐藏]")

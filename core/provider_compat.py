@@ -2,6 +2,7 @@
 import re
 import time
 import logging
+import os
 
 
 def create_with_compat(create, **kwargs):
@@ -45,6 +46,11 @@ def install_openai_compat():
         return
 
     def compatible(self, *args, **kwargs):
+        if os.environ.get("ADGS_CONTROL_TOOLS") and kwargs.get("tools"):
+            # Hermes defaults to auto; the CEO bridge requires an actual tool
+            # receipt before dispatch. Memory/title requests without tools and
+            # all ordinary Worker requests keep their existing behavior.
+            kwargs["tool_choice"] = "required"
         return create_with_compat(lambda **request: original(self, *args, **request), **kwargs)
 
     compatible._adgs_reasoning_compat = True

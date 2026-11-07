@@ -17,6 +17,37 @@ def test_parent_reacquires_slot_without_wall_deadline():
     slot.close()
 
 
+def test_capacity_counts_real_waiters_and_lent_parent_slot():
+    import threading
+    import time
+    from core.node import DynamicSemaphore
+    sem = DynamicSemaphore(1)
+    assert sem.acquire()
+    slot = ExecutionSlot(sem, deadline=0)
+    entered, release = threading.Event(), threading.Event()
+    def worker():
+        assert sem.acquire(timeout=3)
+        entered.set()
+        release.wait(3)
+        sem.release()
+    thread = threading.Thread(target=worker)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while sem.snapshot()["queued_workers"] != 1 and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert sem.snapshot()["queued_workers"] == 1
+    with slot.lend():
+        assert entered.wait(2)
+        assert sem.snapshot()["active_workers"] == 1  # child owns it, parent does not
+        assert sem.snapshot()["queued_workers"] == 0
+        release.set()
+    thread.join(2)
+    slot.close()
+    assert sem.snapshot()["active_workers"] == 0
+    assert sem.snapshot()["peak_active_workers"] == 1
+    assert sem.snapshot()["peak_queued_workers"] == 1
+
+
 def test_coordinator_blocks_code_but_can_wait_and_read(tmp_path, monkeypatch):
     flag = tmp_path / "coordinator.flag"
     monkeypatch.delenv("ADGS_CONTROL_TOOLS", raising=False)

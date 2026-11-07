@@ -135,6 +135,8 @@ class DynamicSemaphore:
         self._cond = threading.Condition()
         self._limit = max(1, int(limit))
         self._held = 0
+        self._waiters = 0
+        self._peak_held = self._peak_waiters = 0
 
     def acquire(self, blocking: bool = True, timeout=None, cancel=None) -> bool:
         with self._cond:
@@ -143,15 +145,31 @@ class DynamicSemaphore:
             if not blocking and self._held >= self._limit:
                 return False
             deadline = None if timeout is None else time.monotonic() + timeout
-            while self._held >= self._limit:
+            waiting = self._held >= self._limit
+            if waiting:
+                self._waiters += 1
+                self._peak_waiters = max(self._peak_waiters, self._waiters)
+            try:
+                while self._held >= self._limit:
+                    if cancel is not None and cancel.is_set():
+                        return False
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        return False
+                    self._cond.wait(min(0.25, remaining) if remaining is not None else 0.25)
                 if cancel is not None and cancel.is_set():
                     return False
-                remaining = None if deadline is None else deadline - time.monotonic()
-                if remaining is not None and remaining <= 0:
-                    return False
-                self._cond.wait(min(0.25, remaining) if remaining is not None else 0.25)
-            self._held += 1
-            return True
+                self._held += 1
+                self._peak_held = max(self._peak_held, self._held)
+                return True
+            finally:
+                if waiting:
+                    self._waiters -= 1
+
+    def snapshot(self):
+        with self._cond:
+            return {"limit": self._limit, "active_workers": self._held, "queued_workers": self._waiters,
+                    "peak_active_workers": self._peak_held, "peak_queued_workers": self._peak_waiters}
 
     def release(self):
         with self._cond:
@@ -172,6 +190,10 @@ class DynamicSemaphore:
 # 执行中节点）。并发槽应与派发层生效并行度一致。
 # 2026-09-28：改 DynamicSemaphore，web 系统设置改并行上限后 resize 立即生效。
 _EXEC_SEM = DynamicSemaphore(config.max_workers_effective)
+
+
+def execution_capacity():
+    return _EXEC_SEM.snapshot()
 
 
 def resize_exec_semaphore(n: int):

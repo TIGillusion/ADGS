@@ -62,3 +62,25 @@ def test_activity_is_persistent_per_chat_and_does_not_create_work(tmp_path, monk
     restored._active = "coordinator-b"
     assert restored._ceo_activity is None
     assert not restored._facts_for()["tasks"]
+
+
+def test_normal_hermes_prose_enters_bounded_ceo_protocol_repair(tmp_path, monkeypatch):
+    import core.hermes as hermes
+    import core.terminal_runtime as runtime
+    from core.hermes_ceo import HermesCEOChat
+    profile = tmp_path / "ceo"
+    profile.mkdir()
+    monkeypatch.setattr(hermes, "HermesInstance", lambda name: SimpleNamespace(profile_dir=profile))
+    monkeypatch.setattr(hermes, "_configure_profile", lambda *a, **kw: True)
+    monkeypatch.setattr(runtime, "terminal_store", SimpleNamespace(paths=lambda *a: tmp_path))
+    monkeypatch.setattr(runtime, "run_hermes", lambda *a, **kw: {
+        "exit_code": 0, "output": "现在续接 B 负责人", "session_id": "original-session"})
+    owner = SimpleNamespace(_hermes_input_count=0, _hermes_input_hash="", _hermes_session_id="original-session",
+                            _hermes_execution_id="ceo-original", _run_id="run-original",
+                            _set_activity=lambda *a, **kw: None)
+    chat = HermesCEOChat(owner, url="http://fixture.invalid", model="fixture", key="fixture")
+    result = chat.call_tools([{"role":"user", "content":"continue"}], [])
+    assert result["error_kind"] == "protocol_error"
+    assert result["content"] == "现在续接 B 负责人"
+    assert owner._hermes_input_count == 1
+    assert owner._hermes_session_id == "original-session"

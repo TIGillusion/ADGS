@@ -242,6 +242,8 @@ def api_state():
     if not ceo_busy and ceo_activity.get("phase") in {"deciding", "inspecting", "waiting_children", "reviewing", "reporting"}:
         ceo_activity["phase"] = "awaiting_user" if ceo_state.get("_awaiting_input") else "interrupted"
     ceo_activity.setdefault("phase", "deciding" if ceo_busy else "idle")
+    from core import node as node_runtime
+    capacity = node_runtime.execution_capacity() if hasattr(node_runtime, "execution_capacity") else {}
     return jsonify({
         "ok": True,
         "workspace": meta["workspace"] if meta else config.workspace,
@@ -252,7 +254,7 @@ def api_state():
                                                       update_ema=False)},
         "models": {"ceo": config.ceo_model, "brain": config.brain_model,
                    "worker": config.worker_model},
-        "runtime": {"max_workers": config.max_workers_effective},
+        "runtime": {"max_workers": config.max_workers_effective, **capacity},
         "advanced": {"tau": config.tau,
                      "explore_beta": config.router_explore_beta},
         "nodes": nodes,

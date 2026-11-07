@@ -41,6 +41,8 @@ def execution_detail(execution_id):
               "last_activity_at": latest.get("last_activity") or meta.get("updated_at"),
               "attempts": [_attempt(a) for a in attempts],
               "events": bus.execution_events(execution_id)}
+    from core.delegation_runtime import execution_is_waiting
+    detail["waiting_for_children"] = execution_is_waiting(execution_id)
     return jsonify(ok=True, execution=detail)
 
 

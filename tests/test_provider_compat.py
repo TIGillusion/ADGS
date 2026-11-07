@@ -92,3 +92,29 @@ def test_hermes_sdk_install_recovers_actual_http_500(monkeypatch):
     assert result.choices[0].message.content == "recovered"
     assert len(bodies) == 2 and "reasoning_effort" not in bodies[1]
     assert bodies[1]["messages"] == bodies[0]["messages"]
+
+
+def test_required_tool_choice_is_scoped_to_ceo_control_process(monkeypatch):
+    import json
+    import httpx
+    from openai import OpenAI
+    from openai.resources.chat.completions import Completions
+    from core.provider_compat import install_openai_compat
+    monkeypatch.setattr(Completions, "create", Completions.create)
+    install_openai_compat()
+    bodies = []
+    def transport(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"id":"fixture","object":"chat.completion","created":0,
+            "model":"fixture","choices":[{"index":0,"message":{"role":"assistant","content":"fixture"},"finish_reason":"stop"}]})
+    tools = [{"type":"function","function":{"name":"report","parameters":{"type":"object"}}}]
+    with OpenAI(api_key="fixture",base_url="http://fixture.invalid/v1",max_retries=0,
+                http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        monkeypatch.delenv("ADGS_CONTROL_TOOLS", raising=False)
+        client.chat.completions.create(model="fixture",messages=[{"role":"user","content":"worker"}],tools=tools)
+        monkeypatch.setenv("ADGS_CONTROL_TOOLS", "control-schema.json")
+        client.chat.completions.create(model="fixture",messages=[{"role":"user","content":"ceo"}],tools=tools)
+        client.chat.completions.create(model="fixture",messages=[{"role":"user","content":"title"}])
+    assert "tool_choice" not in bodies[0]
+    assert bodies[1]["tool_choice"] == "required"
+    assert "tool_choice" not in bodies[2]
