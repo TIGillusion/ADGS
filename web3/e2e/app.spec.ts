@@ -14,7 +14,8 @@ async function e2eState(page: Page) {
     queueLen: number;
     savedGraphs: {
       name: string;
-      graph: { key: string; id?: string; type: string; parent?: string; label?: string }[];
+      graph: { key: string; id?: string; type: string; parent?: string; label?: string;
+        extra?: { contracts?: { taskId?: string; id: string }[] } }[];
     }[];
     chats: { text: string }[];
     commands: string[];
@@ -27,7 +28,16 @@ async function reset(page: Page) {
 
 /** 导航按钮带徽标子元素（如「3」），无障碍名不等于纯文案，统一用 hasText 点击 */
 async function navTo(page: Page, label: string) {
-  await page.locator("nav button", { hasText: label }).first().click();
+  await page.getByRole("button", { name: label, exact: true }).click();
+}
+
+async function loadHistory(page: Page, name: string) {
+  await page.locator(`[data-session-id="${name}"] .project-chat-open`).click();
+  await expect.poll(() => page.evaluate(() => window.__adgs_store!.getState().viewSession)).toBe(name);
+}
+
+async function expectBusy(page: Page, busy: boolean) {
+  await expect.poll(() => page.evaluate(() => window.__adgs_store!.getState().busy)).toBe(busy);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -36,13 +46,13 @@ test.beforeEach(async ({ page }) => {
 
 test("启动：布局 + SSE 实时连接 + 种群快览", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("DARWINIAN OBSERVATORY")).toBeVisible();
+  await expect(page.locator(".project-sidebar-heading")).toHaveText(/ADGS\s+Workspace/);
   // /api/state 加载后侧栏显示 3/8
   await expect(page.locator("aside").getByText("3", { exact: true }).first()).toBeVisible();
   // SSE 建立后指示器变为「实时连接」
   await expect(page.getByText("实时连接", { exact: true })).toBeVisible({ timeout: 15000 });
   // 五个导航项（按钮带徽标子元素，用 hasText 部分匹配）
-  for (const label of ["对话工作台", "演化图谱", "节点种群", "历史会话", "系统概览"]) {
+  for (const label of ["对话工作台", "演化图谱", "节点种群", "系统概览"]) {
     await expect(page.locator("nav button", { hasText: label })).toBeVisible();
   }
 });
@@ -58,13 +68,13 @@ test("对话：完整任务生命周期 + 图谱落盘", async ({ page }) => {
   // 用户消息回显
   await expect(page.getByText("帮我抓取两个页面", { exact: true }).first()).toBeVisible();
   // 忙碌标记出现（导航徽章「忙」）
-  await expect(page.locator("aside").getByText("忙", { exact: true })).toBeVisible({ timeout: 15000 });
+  await expectBusy(page, true);
   // CEO 报告 + 交付物
   await expect(page.getByText("已拆解为两个子任务")).toBeVisible({ timeout: 20000 });
   await expect(page.getByText("两个页面抓取完成，结果已落盘")).toBeVisible({ timeout: 25000 });
   // 系统收尾 + 忙碌解除
   await expect(page.getByText("任务完成", { exact: true }).first()).toBeVisible({ timeout: 15000 });
-  await expect(page.locator("aside").getByText("忙", { exact: true })).toBeHidden({ timeout: 15000 });
+  await expectBusy(page, false);
 
   // 图谱防抖落盘（1.5s）：mock 端收到含实例键的图谱
   const st = await e2eState(page);
@@ -94,10 +104,11 @@ test("图谱：Canvas 渲染 + 统计条 + 图例", async ({ page }) => {
   await navTo(page, "演化图谱");
   await expect(page.locator("canvas").first()).toBeVisible();
   // 1 轮 · 2 任务 · 2 实例
-  await expect(page.getByText("1 轮 · 2 任务 · 2 实例")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("1 轮 · 2 批次 · 2 实例")).toBeVisible({ timeout: 10000 });
   // 图例
   await expect(page.getByText("轮次", { exact: true })).toBeVisible();
-  await expect(page.getByText("完成", { exact: true })).toBeVisible();
+  await page.getByText("节点状态颜色", { exact: true }).click();
+  await expect(page.locator('[data-graph-status="done"]')).toBeVisible();
 });
 
 test("节点：卡片 + 搜索过滤 + 归档区 + 抽屉", async ({ page }) => {
@@ -150,19 +161,13 @@ test("节点：归档复活 + 移除确认", async ({ page }) => {
 
 test("会话：列表 + 载入历史（图谱+转录）+ 隔离占位", async ({ page }) => {
   await page.goto("/");
-  await navTo(page, "历史会话");
-
-  await expect(page.getByText("demo-session")).toBeVisible({ timeout: 15000 });
-  await expect(page.getByText("把这篇英文摘要翻译成中文并润色")).toBeVisible();
-
-  // 两个会话卡片各有一个"载入会话"按钮 → 限定到 demo-session 卡片内
-  const demoCard = page.locator("div.surface", { hasText: "demo-session" }).first();
-  await demoCard.getByRole("button", { name: "载入会话", exact: true }).click();
+  await expect(page.locator('[data-session-id="demo-session"]')).toBeVisible();
+  await loadHistory(page, "demo-session");
   await expect(page.getByText("已载入会话 demo-session")).toBeVisible({ timeout: 10000 });
 
   // 切到对话工作台：历史转录 + 隔离占位
   await navTo(page, "对话工作台");
-  await expect(page.getByText("把这篇英文摘要翻译成中文并润色", { exact: true })).toBeVisible();
+  await expect(page.locator(".chat-scroll").getByText("把这篇英文摘要翻译成中文并润色", { exact: true })).toBeVisible();
   await expect(
     page.getByPlaceholder(/历史会话已激活（demo-session）/),
   ).toBeVisible();
@@ -177,57 +182,45 @@ test("会话：列表 + 载入历史（图谱+转录）+ 隔离占位", async ({
 
   // 图谱视图恢复历史图谱（含旧版 clone 节点）
   await navTo(page, "演化图谱");
-  await expect(page.getByText("1 轮 · 1 任务 · 1 实例")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("1 轮 · 1 批次 · 1 实例")).toBeVisible({ timeout: 10000 });
 
   // 历史视图标记
-  await navTo(page, "历史会话");
-  await expect(page.getByText("重新载入")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('[data-session-id="demo-session"]')).toHaveClass(/selected/);
 });
 
 test("历史会话：多轮图谱载入 → 自动聚焦最近轮 + 轮次下拉（2026-09-04）", async ({ page }) => {
   // 背景：历史会话跑了很多轮，tidy tree 纵向很高，fit 全图缩到不可读（用户误以为
   // "丢节点"）。修复：载入 >3 轮会话默认聚焦最近一轮；图谱工具栏提供轮次下拉。
   await page.goto("/");
-  await navTo(page, "历史会话");
-  // multi-round 卡片 → 点其"载入会话"按钮（两会话各有该按钮，需限定到卡片内）
-  const card = page.locator("div.surface", { hasText: "multi-round" }).first();
-  await expect(card).toBeVisible({ timeout: 15000 });
-  await card.getByRole("button", { name: "载入会话", exact: true }).click();
+  await loadHistory(page, "multi-round");
   await expect(page.getByText("已载入会话 multi-round")).toBeVisible({ timeout: 10000 });
 
   await navTo(page, "演化图谱");
   // 5 轮会话：统计条 + 默认聚焦最近轮（轮 5）
-  await expect(page.getByText("5 轮 · 1 任务 · 1 实例")).toBeVisible({ timeout: 10000 });
-  await expect(page.getByText("已聚焦 轮 5")).toBeVisible();
+  await expect(page.getByText("5 轮 · 1 批次 · 1 实例")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText(/已聚焦 轮 5/)).toBeVisible();
   // 轮次下拉存在且默认选中"轮 5"
   const sel = page.getByLabel("按轮次聚焦");
   await expect(sel).toBeVisible();
   expect(await sel.inputValue()).toBe("round-5");
   // 切到"全部轮次" → 解除聚焦（回全图）
   await sel.selectOption("all");
-  await expect(page.getByText("已聚焦 轮 5")).toBeHidden({ timeout: 5000 });
+  await expect(page.getByText(/已聚焦 轮 5/)).toBeHidden({ timeout: 5000 });
   // 再选"轮 3" → 重新聚焦
   await sel.selectOption("round-3");
-  await expect(page.getByText("已聚焦 轮 3")).toBeVisible();
+  await expect(page.getByText(/已聚焦 轮 3/)).toBeVisible();
 });
 
 test("历史会话：点开实例 → 抽屉磁盘日志回退（2026-09-03 修复）", async ({ page }) => {
   // 背景：历史会话实例无实时日志（刷新/载入后实时缓冲为空）→ 抽屉 hermes/大脑
   // 两标签应回退到磁盘持久化日志尾部（/api/node/<id>/logs），而不是全空。
   await page.goto("/");
-  await navTo(page, "历史会话");
-  await expect(page.getByText("demo-session")).toBeVisible({ timeout: 15000 });
-  // 限定到 demo-session 卡片（multi-round 卡片也有同名按钮）
-  await page
-    .locator("div.surface", { hasText: "demo-session" })
-    .first()
-    .getByRole("button", { name: "载入会话", exact: true })
-    .click();
+  await loadHistory(page, "demo-session");
   await expect(page.getByText("已载入会话 demo-session")).toBeVisible({ timeout: 10000 });
 
   // 历史图谱：ceo → 轮 1 → 任务 1 → ags_2 实例（单链）
   await navTo(page, "演化图谱");
-  await expect(page.getByText("1 轮 · 1 任务 · 1 实例")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("1 轮 · 1 批次 · 1 实例")).toBeVisible({ timeout: 10000 });
 
   // Canvas 点击：双击强制 fit（幂等），再按 fit 后的确定性坐标点击 ags_2 实例。
   // 行星布局为楔形星系密排（节点随枝向旋转；单链 = 径向堆叠，沿正下方延伸），
@@ -315,16 +308,12 @@ test("进化：手动触发 + 横幅 + 种群刷新", async ({ page }) => {
   await expect(page.getByText("最近一次进化")).toBeVisible();
 });
 
-test("会话：新建对话（确认 + 重置）", async ({ page }) => {
+test("旧后端缺少项目接口时保留历史，禁用新会话入口", async ({ page }) => {
   await page.goto("/");
-  await navTo(page, "历史会话");
-
-  await page.getByRole("button", { name: "新建对话", exact: true }).click();
-  await expect(page.getByText("新建对话？")).toBeVisible();
-  await page.getByRole("button", { name: "新建", exact: true }).click();
-  // 系统提示落在对话视图
-  await navTo(page, "对话工作台");
-  await expect(page.getByText("已新建对话（CEO 上下文已重置）")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('[data-session-id="demo-session"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "新会话", exact: true })).toBeDisabled();
+  await loadHistory(page,"demo-session");
+  await expect(page.getByText("翻译需要保留原文术语吗？", {exact:true})).toBeVisible();
 });
 
 test("排队：执行中再发任务 → 排队提示", async ({ page }) => {
@@ -335,11 +324,11 @@ test("排队：执行中再发任务 → 排队提示", async ({ page }) => {
   await box.fill("第一个任务");
   await box.press("Enter");
   // 任务开始后立刻再发
-  await expect(page.locator("aside").getByText("忙", { exact: true })).toBeVisible({ timeout: 10000 });
+  await expectBusy(page, true);
   await box.fill("第二个任务");
   await box.press("Enter");
 
-  await expect(page.getByText("任务已排队：当前有任务执行中，排队等待（可用 /queue 查看）")).toBeVisible({
+  await expect(page.getByText("任务已排队：当前任务结束后执行，可在队列编辑或撤销")).toBeVisible({
     timeout: 10000,
   });
   const st = await e2eState(page);
@@ -358,7 +347,7 @@ test("序号：跨轮 seq 漂移 → 每轮任务 label 从 1 开始", async ({ 
   await box.fill("帮我抓取两个页面");
   await box.press("Enter");
   await expect(page.getByText("任务完成", { exact: true }).first()).toBeVisible({ timeout: 25000 });
-  await expect(page.locator("aside").getByText("忙", { exact: true })).toBeHidden({ timeout: 10000 });
+  await expectBusy(page, false);
 
   // 第二个任务（后端 seq 继续累计，不重置）
   await box.fill("再抓两个页面");
@@ -373,7 +362,7 @@ test("序号：跨轮 seq 漂移 → 每轮任务 label 从 1 开始", async ({ 
   await expect(async () => {
     const s = await e2eState(page);
     const latest = s.savedGraphs[s.savedGraphs.length - 1]?.graph ?? [];
-    const rounds = latest.filter((n) => n.type === "round");
+    const rounds = latest.filter((n) => n.type === "round" && n.parent === "ceo");
     expect(rounds.length).toBe(2);
     for (const r of rounds) {
       const tasks = latest.filter((n) => n.type === "task" && n.parent === r.key);
@@ -383,7 +372,7 @@ test("序号：跨轮 seq 漂移 → 每轮任务 label 从 1 开始", async ({ 
 
   const st = await e2eState(page);
   const latest = st.savedGraphs[st.savedGraphs.length - 1].graph;
-  const rounds = latest.filter((n) => n.type === "round");
+  const rounds = latest.filter((n) => n.type === "round" && n.parent === "ceo");
   expect(rounds.length).toBe(2, "两个任务 = 两轮");
   // 每轮的任务 label 必须是从 1 开始的连续序号
   for (const r of rounds) {
@@ -395,10 +384,12 @@ test("序号：跨轮 seq 漂移 → 每轮任务 label 从 1 开始", async ({ 
   }
   // 第二轮任务的后端原始 seq 嵌在 id（t2_{seq}_e2e）中，应 > 第一轮的 seq
   const roundTaskIds = (rk: string) =>
-    latest.filter((n) => n.type === "task" && n.parent === rk).map((n) => n.id);
-  const seqOf = (id: string) => Number(id.match(/^t2_(\d+)_e2e$/)?.[1] ?? 0);
+    latest.filter((n) => n.type === "task" && n.parent === rk)
+      .flatMap((n) => (n.extra?.contracts ?? []).map(c => c.taskId || c.id));
+  const seqOf = (id: string) => Number(id.match(/t2_(\d+)_e2e/)?.[1] ?? 0);
   const r1max = Math.max(...roundTaskIds(rounds[0].key).map(seqOf));
   const r2min = Math.min(...roundTaskIds(rounds[1].key).map(seqOf));
+  expect(r1max).toBeGreaterThan(0);
   expect(r2min).toBeGreaterThan(r1max, "第二轮后端 seq 累计（漂移），前端 label 仍从 1 开始");
 });
 
@@ -413,7 +404,7 @@ test("对话流：新消息自动滚到底部（2026-09-04 粘性跟随）", asy
   await expect(page.getByText("任务完成", { exact: true }).first()).toBeVisible({ timeout: 25000 });
   await page.waitForTimeout(800); // 吸收收尾系统消息渲染 + 自动滚动
   const atBottom = await page.evaluate(() => {
-    const el = document.querySelector(".bg-grid.overflow-y-auto") as HTMLDivElement | null;
+    const el = document.querySelector(".chat-scroll") as HTMLDivElement | null;
     if (!el) return false;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   });
@@ -429,12 +420,12 @@ test("对话流：手动上滑不被钉底（2026-09-04：上滑即释放跟随 
   await box.fill("帮我抓取两个页面");
   await box.press("Enter");
   await expect(page.getByText("任务完成", { exact: true }).first()).toBeVisible({ timeout: 25000 });
-  await expect(page.locator("aside").getByText("忙", { exact: true })).toBeHidden({ timeout: 15000 });
+  await expectBusy(page, false);
   await box.fill("再抓两个页面");
   await box.press("Enter");
 
   // 等消息流溢出（第二任务执行中，SSE 事件持续到达）
-  const el = page.locator(".bg-grid.overflow-y-auto");
+  const el = page.locator(".chat-scroll");
   await expect
     .poll(async () => (await el.evaluate((n) => n.scrollHeight - n.clientHeight)) > 120, {
       timeout: 25000,
@@ -476,13 +467,7 @@ test("图谱：拖动节点 → 整棵子树跟随，无关节点不动（2026-0
   // 载入 multi-round（round-5 下带 t5_1_multi → ags_3），拖 round-5 后：
   // round-5 + 其子孙全部平移同样增量；round-1（非其子树）坐标不变。
   await page.goto("/");
-  await navTo(page, "历史会话");
-  await expect(page.getByText("multi-round")).toBeVisible({ timeout: 15000 });
-  await page
-    .locator("div.surface", { hasText: "multi-round" })
-    .first()
-    .getByRole("button", { name: "载入会话", exact: true })
-    .click();
+  await loadHistory(page,"multi-round");
   await expect(page.getByText("已载入会话 multi-round")).toBeVisible({ timeout: 10000 });
 
   await navTo(page, "演化图谱");
@@ -490,7 +475,7 @@ test("图谱：拖动节点 → 整棵子树跟随，无关节点不动（2026-0
   const sel = page.getByLabel("按轮次聚焦");
   await expect(sel).toBeVisible({ timeout: 10000 });
   await sel.selectOption("all");
-  await expect(page.getByText("已聚焦 轮 5")).toBeHidden({ timeout: 5000 });
+  await expect(page.getByText(/已聚焦 轮 5/)).toBeHidden({ timeout: 5000 });
 
   const canvas = page.locator("canvas").first();
   await canvas.waitFor({ state: "visible" });
@@ -511,7 +496,7 @@ test("图谱：拖动节点 → 整棵子树跟随，无关节点不动（2026-0
   for (let i = 0; i < 30; i++) {
     const a = await readPos("round-5");
     const b = await readPos("round-1");
-    const c = await readPos("t5_1_multi");
+    const c = await readPos("round-5/batch/t5_1_multi");
     const d = await readPos("ags_3@t5_1_multi");
     if (a && b && c && d) {
       before = { r5: a, r1: b, task: c, inst: d };
@@ -534,7 +519,7 @@ test("图谱：拖动节点 → 整棵子树跟随，无关节点不动（2026-0
   for (let i = 0; i < 20; i++) {
     const a = await readPos("round-5");
     const b = await readPos("round-1");
-    const c = await readPos("t5_1_multi");
+    const c = await readPos("round-5/batch/t5_1_multi");
     const d = await readPos("ags_3@t5_1_multi");
     if (a && b && c && d) {
       after = { r5: a, r1: b, task: c, inst: d };

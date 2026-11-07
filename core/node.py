@@ -747,7 +747,22 @@ class NODE:
             # Mesh contracts can be short natural-language instructions rather
             # than the CEO's rendered sections. Their named output still belongs
             # to the recorded execution workspace.
-            block = task_md
+            # Unstructured amendments include inputs, diagnostic filenames and
+            # CLI examples. Only an explicit output action followed by a path
+            # creates a mechanical obligation; prose mentions are not outputs.
+            outputs = []
+            path_start = (r'(?:[A-Za-z]:[\\/][^\s，。；;"\']+|'
+                          r'[`"\'][\w\-./\\]+\.[A-Za-z0-9]{1,6}[`"\']|'
+                          r'[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]{1,6})(?![\w./\\-])')
+            for clause in re.split(r'[。；;\n]', task_md):
+                for action in re.finditer(r'\b(?:write|create|save|generate)\b|写入|只写|保存|生成|创建|--output\b', clause, re.I):
+                    prefix = clause[:action.start()]
+                    if re.search(r'(?:不得|禁止|不要|不能|严禁|not|never)\s*$', prefix, re.I):
+                        continue
+                    target = clause[action.end():].lstrip(' \t:：')
+                    if re.match(path_start, target):
+                        outputs.append(target)
+            block = '\n'.join(outputs)
             inline_contract = True
         # Only enforce the machine-readable format when explicitly requested.
         # Older contracts allow annotated manifests; later amendments win.
@@ -1070,7 +1085,7 @@ class NODE:
                 bus.emit("node.eval", node=self.node_id, profile=self.profile, **evaluation)
                 return result
             if missing:
-                evaluation = {**evaluation, "passed": False, "score": old_score, "raw_score": min(0, evaluation.get("raw_score") or 0),
+                evaluation = {**evaluation, "passed": False, "outcome": "failed", "score": old_score, "raw_score": min(0, evaluation.get("raw_score") or 0),
                               "failed_items": [*(evaluation.get("failed_items") or []), *missing],
                               "detail": str(evaluation.get("detail") or "") + "；系统机械核验缺失：" + "；".join(missing)}
             if evaluation.get("passed") or reworks >= config.rework_limit or not log.get("session_id"):

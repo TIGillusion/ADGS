@@ -26,3 +26,24 @@ def test_formal_chinese_filename_and_quoted_inline_path_are_preserved(tmp_path,e
     (tmp_path/'中文报告.md').write_text('done',encoding='utf-8')
     assert '存在: 中文报告.md' in evidence('## 交付物\n- 中文报告.md',str(tmp_path))
     assert '存在: 中文报告.md' in evidence('请写入 `中文报告.md` 并报告。',str(tmp_path))
+
+
+def test_inline_failure_description_does_not_require_basename_in_root(tmp_path,evidence):
+    (tmp_path/'report.py').write_text('# implementation',encoding='utf-8')
+    target=tmp_path/'.adgs_artifacts/eval-B/report-jsfix.html'
+    target.parent.mkdir(parents=True);target.write_text('<html>fixed</html>',encoding='utf-8')
+    task=('只写 report.py；使用沙箱输入测试。\n\n## 上层补充要求\n'
+          '续接修复（外部验收判定当前 report.html 失败）。修复 report.py；'
+          '运行 python report.py --output .adgs_artifacts/eval-B/report-jsfix.html。'
+          '写入仅限 report.py 和 .adgs_artifacts/eval-B/。')
+    result=evidence(task,str(tmp_path))
+    assert '缺失: report.html' not in result
+    assert '存在: report.py' in result
+
+
+def test_inline_readonly_background_does_not_create_output_obligation(tmp_path,evidence):
+    (tmp_path/'result.json').write_text('{}',encoding='utf-8')
+    task='请读取 missing/input.csv。\n然后写入 result.json 并汇报，禁止修改输入。'
+    result=evidence(task,str(tmp_path))
+    assert 'missing/input.csv' not in result
+    assert '存在: result.json' in result

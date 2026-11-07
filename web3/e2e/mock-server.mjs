@@ -282,6 +282,7 @@ function taskSeqSteps(text, session, idA, idB, seqA, seqB) {
   ];
 }
 
+const scheduledTasks = new Set();
 function scheduleTask(text) {
   const session = `auto-e2e-${Date.now()}`;
   // 第一次提交 seq=1,2（后端正常归零）；第二次起 seq=3,4…（漂移场景）
@@ -291,7 +292,11 @@ function scheduleTask(text) {
   const idA = `t2_${seqA}_e2e`;
   const idB = `t2_${seqB}_e2e`;
   for (const step of taskSeqSteps(text, session, idA, idB, seqA, seqB)) {
-    setTimeout(step.run.bind(null, { text, session }), step.ms);
+    const timer = setTimeout(() => {
+      scheduledTasks.delete(timer);
+      step.run({ text, session });
+    }, step.ms);
+    scheduledTasks.add(timer);
   }
   return session;
 }
@@ -382,6 +387,10 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, seq: record.seq });
   }
   if (p === "/e2e/reset" && m === "POST") {
+    // A queue test can finish before its scripted task. Never replay those
+    // callbacks into the next test's session after reset.
+    for (const timer of scheduledTasks) clearTimeout(timer);
+    scheduledTasks.clear();
     state.busy = false;
     state.queueLen = 0;
     state.queue = [];
