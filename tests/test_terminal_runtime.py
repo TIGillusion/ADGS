@@ -44,6 +44,18 @@ def test_repeated_provider_compression_failure_is_terminal_infrastructure():
     assert runtime._provider_failure_reason("inference request expired while waiting for admission\n" * 2)
 
 
+def test_exhausted_http_provider_error_preserves_actual_status():
+    terminal = ("Response truncated — stream ended before completion\n"
+                "Attempt 1/3 failed: HTTP 500: Internal Server Error\n"
+                "Attempt 2/3 failed: HTTP 500: Internal Server Error\n"
+                "API failed after 3 retries — HTTP 500: Internal Server Error\n")
+    assert "HTTP 500" in runtime._provider_failure_reason(terminal)
+    assert runtime._provider_failure_reason("Attempt 1/3 failed: HTTP 500: Internal Server Error") == ""
+    reason, error = runtime._refine_exit_failure(1, Path("not-present-receipt"), "saved-session", terminal)
+    assert reason == "provider_error"
+    assert "HTTP 500" in error
+
+
 def test_stale_provider_chatter_is_recognized(tmp_path):
     """2026-10-22 实测:opencode 网关无响应时 hermes 的新话术必须被识别,
     否则监控干等 CLI 挣扎十几分钟后 exit 1,还会被归成不可读的 process_error"""
@@ -315,6 +327,8 @@ def test_waiting_provider_heartbeat_is_not_progress():
     assert not runtime._activity_is_progress("waiting for stream response (180s, no chunks yet)")
     assert runtime._activity_is_progress("receiving stream response")
     assert runtime._activity_is_progress("tool completed: terminal (2.0s)")
+    assert not runtime._activity_is_progress("⏳ waiting on deepseek-flash — no stream output for 60s (provider may be slow)")
+    assert not runtime._activity_is_progress("⏳ Retrying in 3.0s (attempt 1/3)...")
 
 
 def test_waiting_heartbeats_cannot_prevent_inactivity_timeout(fake_installation, monkeypatch):
@@ -338,6 +352,29 @@ def test_quiet_computing_child_is_progress_without_total_deadline(fake_installat
                                backend="pipe", timeout=None, inactivity_timeout=2.5, store=store)
     assert result["exit_code"] == 0, result
     assert time.monotonic() - started > 4
+
+
+def test_explicit_workspace_overrides_inherited_launch_paths(fake_installation, monkeypatch):
+    store, _ = fake_installation
+    workspace = runtime.ROOT / "actual-project"
+    workspace.mkdir()
+    _, source = runtime.hermes_installation()
+    main = source / "hermes_cli/main.py"
+    body = main.read_text(encoding="utf-8")
+    body = body.replace('    text = Path(args[args.index("--query-file") + 1]).read_text(encoding="utf-8")',
+        '''    target = Path(args[args.index("--in") + 1])
+    assert "--no-restore-cwd" in args
+    assert Path.cwd() == target
+    assert os.environ["HERMES_CWD"] == os.environ["TERMINAL_CWD"] == str(target)
+    assert os.environ["HERMES_DISABLE_CWD_FOLLOW"] == "1"
+    text = Path(args[args.index("--query-file") + 1]).read_text(encoding="utf-8")
+    assert str(target) in text''')
+    main.write_text(body, encoding="utf-8")
+    monkeypatch.setenv("HERMES_CWD", str(runtime.ROOT))
+    monkeypatch.setenv("TERMINAL_CWD", str(runtime.ROOT))
+    result = runtime.run_hermes("ags_140", "workspace check", cwd=str(workspace),
+                               execution_id="workspace", attempt_id="workspace", backend="pipe", timeout=15, store=store)
+    assert result["exit_code"] == 0, result
 
 
 def test_waiting_for_children_pauses_inactivity_watchdog(fake_installation, monkeypatch):

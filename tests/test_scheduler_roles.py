@@ -35,9 +35,30 @@ def test_coordinator_blocks_code_but_can_wait_and_read(tmp_path, monkeypatch):
     flag.touch()
     invoke("terminal")
     assert "协调" in calls[-1]["scope_block"]
-    for name in ("read_file", "mcp__mesh__wait_delegation", "mcp__mesh__delegate_to_node"):
+    for name in ("read_file", "tool_search", "tool_describe", "mcp__mesh__wait_delegation", "mcp__mesh__delegate_to_node"):
         invoke(name)
         assert calls[-1]["scope_block"] is None
+    executor._dispatch_authorized_once(None, None, SimpleNamespace(name="tool_call"), scope_block="Missing task_md; retry with the required schema")
+    assert calls[-1]["scope_block"].startswith("Missing task_md")
+
+
+def test_coordinator_sees_malformed_bridge_error_instead_of_role_denial(tmp_path, monkeypatch):
+    marker = tmp_path / "coordinator.flag"
+    marker.touch()
+    monkeypatch.delenv("ADGS_CONTROL_TOOLS", raising=False)
+    monkeypatch.setenv("ADGS_COORDINATOR_FLAG", str(marker))
+    agent = ModuleType("agent")
+    calls = []
+    executor = SimpleNamespace(_dispatch_authorized_once=lambda *a, **kw: calls.append(kw))
+    agent.tool_executor = executor
+    bridge = ModuleType("tools.tool_search")
+    bridge.resolve_underlying_call = lambda args: (None, {}, "tool_call 'calls' must be a non-empty array")
+    for name, module in (("agent", agent), ("model_tools", ModuleType("model_tools")), ("tools.tool_search", bridge)):
+        monkeypatch.setitem(sys.modules, name, module)
+    install_role_tools()
+    executor._dispatch_authorized_once(None, None, SimpleNamespace(name="tool_call", args={"calls": "[]"}), scope_block=None)
+    assert "non-empty array" in calls[-1]["scope_block"]
+    assert "负责协调" not in calls[-1]["scope_block"]
 
 
 def test_old_task_has_no_total_deadline(tmp_path, monkeypatch):

@@ -42,12 +42,19 @@ def install_role_tools():
     def dispatch(agent, state, ref, **kwargs):
         denied = bool(schemas and ref.name not in names)
         if not schemas and coordinator_file and Path(coordinator_file).is_file():
-            allowed = {"read_file", "search_files", "list_files"}
+            allowed = {"read_file", "search_files", "list_files", "tool_search", "tool_describe"}
             mesh = ("list_nodes", "probe_node", "delegate_to_node", "wait_delegation",
                     "report_delegation_verdict", "escalate_delegation_verdict")
             denied = ref.name not in allowed and not any(ref.name.endswith("__" + name) for name in mesh)
         if denied:
-            kwargs["scope_block"] = "本实例负责协调下属。请等待汇报、读取产物、验收或继续委派，业务代码交给工作节点。"
+            block = kwargs.get("scope_block")
+            if not block and not schemas and ref.name == "tool_call":
+                # A malformed deferred bridge has not resolved to an actual
+                # tool. Preserve its parameter error instead of misleading
+                # coordinators into thinking delegation itself is forbidden.
+                from tools.tool_search import resolve_underlying_call
+                _, _, block = resolve_underlying_call(getattr(ref, "args", {}))
+            kwargs["scope_block"] = block or "本实例负责协调下属。请等待汇报、读取产物、验收或继续委派，业务代码交给工作节点。"
         return original(agent, state, ref, **kwargs)
 
     tool_executor._dispatch_authorized_once = dispatch

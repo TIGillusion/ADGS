@@ -619,6 +619,9 @@ class NODE:
 - 复核（report_delegation_verdict）：审阅子节点汇报后给出验收判定，驱动其进化分。
 
 协作纪律：
+0. 若工具以 tool_call 桥接调用，calls 必须是真正的 JSON 数组，不能把数组再编码成字符串；
+   每个 tool_call 只放一个本地/MCP 工具调用，需要并发时发出多个独立 tool_call。
+   选人或连通性调查使用 list_nodes/probe_node，不要用 task_md="test" 或缩减正式合同来试派任务。
 1. 先调查后决策：委派前用 list_nodes 多角度查询、probe_node 深查候选，综合技能、战绩、
    忙闲、协作史后再决定委派给谁（或自己完成）。凭印象直接委派是失职。
 2. 任务适配优先：目录按当前子任务适配排序，擅长该任务的节点优先；缺少匹配专长时选通用节点，
@@ -680,6 +683,12 @@ class NODE:
         """机械核验：交付物清单里形似路径的项逐个检查存在性（独立验收的证据输入）。"""
         from pathlib import Path
         block = task_section(task_md, "交付物") or ""
+        if not block and len(task_md.splitlines()) <= 8 and re.search(
+                r"\b(?:write|create|save|generate)\b|写入|生成|保存", task_md, re.I):
+            # Mesh contracts can be short natural-language instructions rather
+            # than the CEO's rendered sections. Their named output still belongs
+            # to the recorded execution workspace.
+            block = task_md
         lines, checked = [], 0
         for raw in block.splitlines():
             item = raw.strip().lstrip("-*• ").strip()
@@ -711,7 +720,10 @@ class NODE:
         半成品也会被"按产出推断 passed"，2026-10-24 T9 实测漏判）。
         返回 {passed, evaluation, summary}；验收官不可用时返回 unjudged 结果。"""
         mech = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
-        review_input = str(output or "")[-9000:] + "\n\n【系统机械核验】\n" + mech
+        missing = [line[2:] for line in mech.splitlines() if line.startswith("- 缺失: ")]
+        review_input = (str(output or "")[-9000:] + "\n\n【系统机械核验】\n本执行工作区：" +
+                        str(getattr(self, "_workspace", "")) +
+                        "\n相对交付路径以此目录为基准；文件写到其他目录不能算本项目交付完成。\n" + mech)
         budget = getattr(self, "_deadline", None)
         remaining = min(600, max(120, budget - time.monotonic())) if budget else 600
         review = self.agent.evaluate(
@@ -725,16 +737,17 @@ class NODE:
                 task_md, {"output": output}, "unjudged",
                 f"独立验收不可用（申报为 {self_reported or '缺失'}）: {str(review.get('detail', ''))[:200]}。"
                 f"成果保留待核实，不作为成功计入。")}
-        passed = bool(review.get("passed"))
+        passed = bool(review.get("passed")) and not missing
         mismatch = (self_reported == "passed") != passed
         evaluation = {"passed": passed, "outcome": "passed" if passed else "failed",
                       "self_reported": self_reported or "missing",
-                      "raw_score": review.get("raw_score"),
-                      "score": review.get("score"),
+                      "raw_score": min(0, review.get("raw_score") or 0) if missing else review.get("raw_score"),
+                      "score": getattr(self, "_score_base", 50.0) if missing else review.get("score"),
                       "passed_items": review.get("passed_items") or [],
-                      "failed_items": review.get("failed_items") or [],
+                      "failed_items": (review.get("failed_items") or []) + missing,
                       "detail": ((summary or "") + " ｜验收: " if summary else "验收: ")
                                 + str(review.get("detail") or ("passed" if passed else "failed"))
+                                + (("；系统机械核验未通过：" + "；".join(missing)) if missing else "")
                                 + (("；⚠申报与验收不一致（申报 %s）" % self_reported) if mismatch else "")}
         return {"passed": passed, "evaluation": evaluation}
 

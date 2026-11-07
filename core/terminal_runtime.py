@@ -38,6 +38,10 @@ def _provider_failure_reason(text: str) -> str:
     unresponsive = recent.count("provider has been unresponsive")
     rejected = recent.count("retrying won't help")
     stale = recent.count("no response from provider")
+    http_failure = re.search(r"\bhttp\s+(401|403|408|413|422|429|5\d\d)\b", recent)
+    if http_failure and any(marker in recent for marker in (
+            "api failed after", "final error:", "server error on all", "rate limit on all")):
+        return f"模型服务请求失败（HTTP {http_failure[1]}），重试已耗尽；原会话已保留"
     if ((compression >= 2 and connection >= 1) or admission >= 2 or connection >= 3
             or unresponsive >= 2 or rejected >= 1 or stale >= 3):
         if unresponsive or rejected or stale:
@@ -349,8 +353,9 @@ def _activity_is_progress(description):
     # Hermes refreshes these labels while no provider data has arrived. They
     # prove liveness, but must not indefinitely reset our inactivity watchdog.
     text = str(description or "").strip().lower()
-    return bool(text) and not text.startswith(("waiting for ", "local model loading",
-                                               "executing ", "sequential tool running"))
+    text = re.sub(r"^[^\w]+", "", text)
+    return bool(text) and not re.match(
+        r"^(?:waiting|still waiting|retrying|reconnecting|local model loading|executing|sequential tool running)\b", text)
 
 
 def _session_snapshot(home, session_id, cursor, activity_details=None):
@@ -486,6 +491,11 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
     store.create(**{k: v for k, v in ids.items() if k != "node"}, session_id=session_id)
     directory = store.paths(execution_id, attempt_id)
     task_file = directory / "task.md"
+    task_workspace = str(Path(cwd).resolve()) if cwd else None
+    if task_workspace:
+        instruction = (f"【ADGS 本执行工作区】\n{task_workspace}\n"
+                       "本任务中的相对路径均以此目录为基准。其他会话、长期记忆或平台安装目录不能替代此工作区。"
+                       "不要为了寻找任务目录切换到 ADGS 平台根目录。\n\n" + instruction)
     task_file.write_text(instruction, encoding="utf-8")
     output_file = directory / "output.vt"
     output_file.touch()
@@ -573,11 +583,16 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             cmd += ["--skills", "adgs-ceo"]
         if session_id:
             cmd += ["--resume", session_id]
+        if task_workspace and not frozen:
+            cmd += ["--in", task_workspace, "--no-restore-cwd"]
         env = os.environ.copy()
         env.pop("PYTHONSTARTUP", None)
         for key in ("ZELLIJ_PANE_ID", "TMUX_PANE", "KITTY_WINDOW_ID", "WEZTERM_PANE"):
             env.pop(key, None)
         env.update({"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "TERM": "xterm-256color", "TERM_SESSION_ID": terminal_identity, "ADGS_HERMES_RUN": "1", "ADGS_HERMES_RECEIPT": str(directory / "turn-receipt.json"), "HERMES_HOME": str(hermes_home)})
+        if task_workspace:
+            env.update({"HERMES_CWD": task_workspace, "TERMINAL_CWD": task_workspace,
+                        "HERMES_DISABLE_CWD_FOLLOW": "1"})
         env["ADGS_COORDINATOR_FLAG"] = str(coordinator_flag)
         if control_tools:
             tools_file = directory / "ceo-tools.json"
