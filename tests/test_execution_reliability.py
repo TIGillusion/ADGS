@@ -155,17 +155,15 @@ def test_parent_cancellation_reaches_descendants_without_reverse_cancel():
     assert sibling.is_set()
 
 
-def test_pass_with_advisory_failed_items_is_accepted_in_one_call():
-    """passed=True + failed_items = 总体通过、带非阻断瑕疵——一次通过，不再打回
-    （2026-10-24 T13 实测：验收官给"通过但扣分"被旧规则误判协议失败）。"""
+def test_pass_with_separate_advisories_is_accepted_in_one_call():
+    """Optional suggestions do not block completed requirements or cause rework."""
     agent = AGENT("http://fixture.invalid", "fixture", "fixture")
     advisory = report()
-    advisory["tool_calls"][0]["arguments"]["failed_items"] = [
-        {"criterion": "报告附原始JSON", "why": "非阻断瑕疵，证据可追溯性略降"}]
+    advisory["tool_calls"][0]["arguments"]["advisories"] = ["可选：报告附原始JSON，增加证据可追溯性"]
     agent.chat.call_tools = Mock(return_value=advisory)
     result = agent.evaluate("original", "evidence", old_score=50, timeout=5)
     assert result["passed"] and agent.chat.call_tools.call_count == 1
-    assert result["failed_items"]  # 瑕疵保留在结果里供上级参考
+    assert result["advisories"] and not result["failed_items"]
 
 
 def test_fail_without_failed_items_repairs_report():

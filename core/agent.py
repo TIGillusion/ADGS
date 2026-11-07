@@ -144,6 +144,22 @@ def _clean_describe(text: str) -> str:
 # AGENT
 # ================================================
 
+def _acceptance_result(args, old_score):
+    failed = args["failed_items"]
+    passed = bool(args["passed"]) and not failed
+    raw_score = max(-10.0, min(10.0, float(args["score"])))
+    # A contradictory overall pass must neither hide unmet criteria nor earn
+    # positive credit. Keep concrete failures for targeted continuation.
+    if args["passed"] and failed:
+        raw_score = min(0.0, raw_score)
+    advisories = args.get("advisories", [])
+    return {"passed": passed, "score": max(0.0, old_score + raw_score * config.delta_coef),
+            "raw_score": raw_score, "outcome": "passed" if passed else "failed",
+            "passed_items": args["passed_items"], "failed_items": failed,
+            "advisories": advisories,
+            "detail": f"通过: {args['passed_items']}; 失败: {failed}; 建议: {advisories}"}
+
+
 class AGENT:
     """节点智能体：任务决策（答题卡模式）"""
 
@@ -381,6 +397,8 @@ class AGENT:
                         "passed": {"type": "boolean"},
                         "score": {"type": "number", "minimum": -10, "maximum": 10},
                         "passed_items": {"type": "array", "items": {"type": "string"}},
+                        "advisories": {"type": "array", "items": {"type": "string"},
+                                       "description": "合同要求之外的可选改进建议，不得放入未达成的验收标准"},
                         "failed_items": {"type": "array", "items": {"type": "object",
                             "properties": {"criterion": {"type": "string"}, "why": {"type": "string"}},
                             "required": ["criterion", "why"]}},
@@ -402,7 +420,9 @@ class AGENT:
 
 【本段执行证据】
 {evidence_excerpt(work_log, 7000)}
-逐条给出本段通过项和失败项；本段没有足够证据时标为失败项并说明缺口。"""}
+逐条给出本段通过项和失败项；本段没有足够证据时标为失败项并说明缺口。
+failed_items 是未达成的合同标准，非空时 passed 必须为 false；不得以总体通过、环境限制或扣分豁免。
+合同之外的可选改进写 advisories，不能将要求降格为建议。"""}
         ]
         deadline = time.monotonic() + timeout if timeout is not None else None
         for repair in range(2):
@@ -417,18 +437,10 @@ class AGENT:
             error = validate_arguments(args, tool["function"]["parameters"])
             if not error and tcs[0].get("name") != "accept_report":
                 error = "必须提交 accept_report"
-            # passed=True + failed_items = 总体通过、附带非阻断瑕疵（合法且常见，
-            # 例如"完成但报告未逐字附原始 JSON"）——2026-10-24 T13 实测被旧规则
-            # 误打回导致验收协议失败。真正非法的是反方向：
             if not error and not args["passed"] and not args["failed_items"]:
                 error = "passed=False 但没有任何 failed_items；请逐条给出失败依据"
             if not error:
-                raw_score = max(-10.0, min(10.0, float(args["score"])))
-                return {"passed": bool(args["passed"]),
-                        "score": max(0.0, old_score + raw_score * config.delta_coef),
-                        "raw_score": raw_score, "outcome": "passed" if args["passed"] else "failed",
-                        "passed_items": args["passed_items"], "failed_items": args["failed_items"],
-                        "detail": f"通过: {args['passed_items']}; 失败: {args['failed_items']}"}
+                return _acceptance_result(args, old_score)
             messages.append({"role": "user", "content": f"验收格式需要修正：{error}。只重新提交本段结论，不要求重做成果。"})
         return {"passed": False, "score": old_score, "unjudged": True,
                 "outcome": "protocol_error", "detail": f"验收格式无法解析: {error}"}
@@ -467,14 +479,17 @@ class AGENT:
                     "score": max(0.0, old_score + raw_score * config.delta_coef),
                     "raw_score": raw_score, "outcome": "passed" if not failed else "failed",
                     "passed_items": passed_items, "failed_items": failed,
+                    "advisories": [item for result in results for item in result.get("advisories", [])],
                     "chunks": results,
                     "detail": f"分块验收 {len(results)} 段；通过 {len(passed_items)} 项；失败 {len(failed)} 项"}
         log_budget = max(1000, char_budget - len(task_md) - len(self.system_prompt) - 2500)
         tool = {
             "type": "function", "function": {"name": "accept_report", "description": "验收判定",
                 "parameters": {"type": "object", "properties": {
-                    "passed": {"type": "boolean"}, "score": {"type": "number"},
+                    "passed": {"type": "boolean"}, "score": {"type": "number", "minimum": -10, "maximum": 10},
                     "passed_items": {"type": "array", "items": {"type": "string"}},
+                    "advisories": {"type": "array", "items": {"type": "string"},
+                                   "description": "合同之外的可选改进，不得豁免验收标准"},
                     "failed_items": {"type": "array", "items": {"type": "object", "properties": {
                         "criterion": {"type": "string"}, "why": {"type": "string"}},
                         "required": ["criterion", "why"]}}},
@@ -493,7 +508,9 @@ class AGENT:
 
 【执行证据】
 {evidence_excerpt(work_log, log_budget)}
-给出 -10~10 的本次任务评分，以及 passed_items / failed_items。"""}
+给出 -10~10 的本次任务评分，以及 passed_items / failed_items。
+failed_items 是未达成的合同标准，非空时 passed 必须为 false；不得以总体通过、环境限制或扣分豁免。
+合同之外的可选改进写 advisories，不能将要求降格为建议。"""}
         ]
         deadline = time.monotonic() + timeout if timeout is not None else None
         for repair in range(2):
@@ -509,9 +526,6 @@ class AGENT:
             error = validate_arguments(args, tool["function"]["parameters"])
             if not error and tcs[0].get("name") != "accept_report":
                 error = "必须提交 accept_report"
-            # passed=True + failed_items = 总体通过、附带非阻断瑕疵（合法且常见，
-            # 例如"完成但报告未逐字附原始 JSON"）——2026-10-24 T13 实测被旧规则
-            # 误打回导致验收协议失败。真正非法的是反方向：
             if not error and not args["passed"] and not args["failed_items"]:
                 error = "passed=False 但没有任何 failed_items；请逐条给出失败依据"
             if not error:
@@ -520,13 +534,7 @@ class AGENT:
         else:
             return {"passed": False, "score": old_score, "unjudged": True,
                     "outcome": "protocol_error", "detail": f"验收格式无法解析: {error}"}
-        raw_score = max(-10.0, min(10.0, float(args["score"])))
-        passed = args["passed"]
-        score = max(0.0, old_score + raw_score * config.delta_coef)
-        return {"passed": passed, "score": score, "raw_score": raw_score,
-                "outcome": "passed" if passed else "failed",
-                "passed_items": args["passed_items"], "failed_items": args["failed_items"],
-                "detail": f"通过: {args['passed_items']}; 失败: {args['failed_items']}"}
+        return _acceptance_result(args, old_score)
 
 
     # ---------------- 描述生成（LLM 微调） ----------------
