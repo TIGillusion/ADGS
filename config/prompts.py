@@ -231,10 +231,18 @@ def render_task_md(overall_goal: str, goal: str, requirements: list,
     perm = permissions or f"只允许修改工作区 {ws} 内的文件，禁止修改其他目录"
     from core.scheduling import write_resources
     readonly = not write_resources({"permissions": perm}, ws)
-    # .adgs_artifacts 是系统产物目录（报告/日志/交接文档归置处），始终允许写
+    # Ordinary read-only work still archives its system report. An explicit
+    # prohibition of report creation or all new files takes precedence.
+    import re
+    denials = re.findall(r"(?:禁止|不得|严禁|不允许|不要)([^。；;\n]*)", perm)
+    report_forbidden = any(re.search(r"创建|新建|写入|写|落盘", clause)
+                           and re.search(r"报告|(?:任何|所有)文件", clause)
+                           for clause in denials)
+    report_forbidden = bool(report_forbidden or re.search(
+        r"\b(?:do not|must not|never)\s+(?:create|write)\b[^.;\n]*\b(?:report|files?)\b", perm, re.I))
     in_artifacts = ".adgs_artifacts" in rp.replace("\\", "/").lower()
-    report_authorized = in_artifacts
-    if not report_authorized and write_paths is not None:
+    report_authorized = in_artifacts and not report_forbidden
+    if not report_authorized and not report_forbidden and not readonly and write_paths is not None:
         import os
         from pathlib import Path
         report = os.path.normcase(str(Path(rp).resolve()))
@@ -242,10 +250,14 @@ def render_task_md(overall_goal: str, goal: str, requirements: list,
             report == os.path.normcase(str(Path(p).resolve())) or
             (Path(p).is_dir() and Path(rp).resolve().is_relative_to(Path(p).resolve()))
             for p in write_paths)
-    # 报告落盘：产物目录（.adgs_artifacts）始终可写——无论任务是否只读，
-    # 报告都必须归置落盘（不进用户工作区根目录），只读约束针对的是用户文件与设备
     reporting = (f"完成任务后，将完整执行报告写入 {rp}。" if report_authorized else
                  "直接在当前会话输出完整执行报告，不创建文件。")
+    placement = (f"""本任务的所有已授权产物——执行报告、工作日志、交接文档、中间产物、快照——统一放在
+{ws}/.adgs_artifacts/ 目录下，不要散落在工作区根目录或用户项目目录里。
+报告路径见「输出要求」；工作日志和交接文档放在报告同目录，命名带任务名前缀。"""
+                 if report_authorized else
+                 "本任务不要求报告落盘。直接在当前会话汇报，不创建报告、工作日志或交接文件。"
+                 "系统产物目录不构成额外写入授权，其他交付物仍须遵守上方权限与写路径约束。")
     return f"""# 任务书
 
 ## 总体任务
@@ -279,10 +291,7 @@ def render_task_md(overall_goal: str, goal: str, requirements: list,
 报告须包含：执行过程、关键输出、遇到的问题、最终结果。
 
 ## 产物归置
-本任务的所有产物——执行报告、工作日志、交接文档、中间产物、快照——统一放在
-{ws}/.adgs_artifacts/ 目录下（系统产物目录，始终可写），不要散落在工作区根目录或
-用户项目目录里，保持用户目录整洁。报告路径见「输出要求」；工作日志和交接文档
-放在报告同目录，命名带任务名前缀。
+{placement}
 
 ## 技能固化
 技能固化（skill_manage）是每个节点的**固有权限**，不需要任务权限授权：写入的是你自己

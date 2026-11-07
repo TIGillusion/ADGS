@@ -26,3 +26,24 @@ def test_read_only_task_never_requires_report_file_even_if_declared(tmp_path):
     task = render_task_md("goal", "read", [], [], [], "只读；不得修改任何文件", report_path=str(report),
         workspace=str(tmp_path), write_paths=[str(report)])
     assert "当前会话输出完整执行报告，不创建文件" in task
+
+
+def test_explicit_no_report_instruction_overrides_system_artifact_default(tmp_path):
+    report = tmp_path / '.adgs_artifacts' / 'run' / 'report.md'
+    for permissions in (
+        '只读权限。禁止创建、修改、删除任何文件（含报告文件）。',
+        '只读；禁止新建任何文件',
+        '只读；不得创建报告文件',
+    ):
+        task = render_task_md('goal', 'read input', [], [], [], permissions,
+                              report_path=str(report), workspace=str(tmp_path))
+        assert str(report) not in task
+        assert '当前会话输出完整执行报告，不创建文件' in task
+        assert '始终可写' not in task
+
+
+def test_ordinary_readonly_task_keeps_system_report_archiving(tmp_path):
+    report = tmp_path / '.adgs_artifacts' / 'run' / 'report.md'
+    task = render_task_md('goal', 'read input', [], [], [], '只读',
+                          report_path=str(report), workspace=str(tmp_path))
+    assert f'将完整执行报告写入 {report}' in task
