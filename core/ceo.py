@@ -778,7 +778,7 @@ class CEO:
                 # CEO 作为直系上级的程序化结算：账本任务最终结论 → 节点分修正
                 # （passed=+2 / failed=-2 / 其它 0；幅度与其它打分动作一致，
                 # 单任务不会打穿总分——2026-10-24 分层验收设计）。
-                if finish_status != "blocked":
+                if finish_status in {"completed", "failed"}:
                     self._settle_direct_reports(finish_status)
                 self._task_done = finish_status != "blocked"
                 self._set_activity(finish_status)
@@ -1100,12 +1100,15 @@ class CEO:
         return summary
 
     def _finish_rejection(self, status):
-        if status != "completed":
+        if status not in {"completed", "answered"}:
             return None
         tasks = [t for t in self._facts_for()["tasks"].values()
                  if t.get("active_run_id", t.get("run_id")) == self._run_id]
+        if status == "answered":
+            return ("本轮已有执行任务，请继续验收并使用 completed、blocked 或 failed；不能用纯答复跳过任务义务。"
+                    if tasks else None)
         if not tasks:
-            return "本轮没有已验收的任务证据，请先执行或验收；无法推进时结束为 blocked。"
+            return "本轮没有已验收的任务证据。纯答复已有信息请用 answered；业务工作需先执行或验收，无法推进时用 blocked。"
         pending = [t["task_id"] for t in tasks if t.get("outcome") != "passed"]
         if pending:
             return "以下必需任务尚未验收通过：" + ", ".join(pending)
@@ -1555,6 +1558,8 @@ class CEO:
         if isinstance(arts, str):
             arts = [arts]
         art_list = chr(10).join("- " + str(a) for a in arts) or "- 无"
+        if args.get("status") == "answered":
+            return args.get("summary", "")
         title = {"completed": "任务完成汇报", "blocked": "任务阻塞汇报", "failed": "任务未完成汇报"}.get(args.get("status", "completed"), "任务汇报")
         return f"""════ {title} ════
 

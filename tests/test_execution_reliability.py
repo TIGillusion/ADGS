@@ -22,6 +22,27 @@ from core.terminal_runtime import TerminalStore
 from web.event_bus import EventBus, event_scope
 
 
+def test_long_mesh_report_target_is_checked_without_formal_deliverables_heading(tmp_path):
+    target = tmp_path / '.adgs_artifacts/负责人最终_report.md'
+    target.parent.mkdir(); target.write_text('# 实际报告\n真实执行证据', encoding='utf-8')
+    task = ('## 子任务：落盘最终报告\n你只写这一个文件（不存在则建目录）：\n'
+            + str(target) + '\n不得修改 existing/input.csv。\n### 背景\n'
+            + ('参考已有 solver/core.py；不要求生成新的求解器。\n' * 30))
+    evidence = NODE._mechanical_evidence(task, str(tmp_path))
+    assert '- 存在: ' + str(target) in evidence
+    assert 'input.csv' not in evidence and 'solver/core.py' not in evidence
+    target.unlink()
+    assert '- 缺失: ' + str(target) in NODE._mechanical_evidence(task, str(tmp_path))
+
+
+def test_output_declaration_does_not_make_forbidden_or_readonly_inputs_deliverables(tmp_path):
+    task = ('只读审阅以下输出文件：\ninput/source.md\n'
+            '不得写入以下路径：\nprivate/secret.md\n### 背景\n' + '背景说明\n' * 10)
+    # Reading an output is not an instruction to produce it.
+    evidence = NODE._mechanical_evidence(task, str(tmp_path))
+    assert 'private/secret.md' not in evidence and 'input/source.md' not in evidence
+
+
 def report(passed=True, score=10):
     return {"tool_calls": [{"name": "accept_report", "arguments": {
         "passed": passed, "score": score, "passed_items": ["tests passed"],

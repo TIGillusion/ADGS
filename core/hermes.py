@@ -375,6 +375,8 @@ def _profile_ready(profile_name, mesh_required=None):
             return False
         if (data.get("session") or {}).get("terminal_continue", True) is False:
             return False
+        if profile_name != "ceo" and (data.get("approvals") or {}).get("single_query_mode") != "approve":
+            return False
         disabled = (data.get("agent") or {}).get("disabled_toolsets") or []
         if isinstance(disabled, str):
             disabled = [part.strip() for part in disabled.split(",") if part.strip()]
@@ -435,6 +437,19 @@ def _configure_profile(profile_name, worker_cfg, overwrite_model=False, mesh_req
                     return False
         session = data.setdefault("session", {})
         session["terminal_continue"] = True
+        if profile_name != "ceo":
+            approvals = data.setdefault("approvals", {})
+            if approvals.get("single_query_mode") != "approve":
+                # ADGS workers are explicitly trusted by the operator and run
+                # with -q. Hermes otherwise denies even ordinary Python -c
+                # checks because there is no interactive approval terminal.
+                # Preserve the original local config before this migration.
+                config_file = home / "config.yaml"
+                if config_file.is_file():
+                    backup = home / "backups" / "adgs-runtime"
+                    backup.mkdir(parents=True, exist_ok=True)
+                    (backup / ("before-trusted-query-" + uuid.uuid4().hex + ".yaml")).write_bytes(config_file.read_bytes())
+                approvals["single_query_mode"] = "approve"
         agent = data.setdefault("agent", {})
         disabled = agent.get("disabled_toolsets") or []
         if isinstance(disabled, str):

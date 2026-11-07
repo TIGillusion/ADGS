@@ -403,7 +403,7 @@ function FinishMsg({ m }: { m: ChatMessage }) {
   const blocked = m.status === "blocked";
   const failed = m.status === "failed";
   const unresolved = blocked || failed;
-  const label = blocked ? "CEO 汇报受阻，任务待恢复" : failed ? "CEO 汇报任务未通过" : "任务完成";
+  const label = m.status === "answered" ? "CEO 答复" : blocked ? "CEO 汇报受阻，任务待恢复" : failed ? "CEO 汇报任务未通过" : "任务完成";
   const Icon = unresolved ? ShieldAlert : CheckCircle2;
   return (
     <div className="msg-in flex gap-2.5">

@@ -328,6 +328,32 @@ class ReliabilityTests(unittest.TestCase):
         with patch("core.execution_store.execution_store.get", return_value=None):
             self.assertEqual(self.ceo._continue_task({"execution_id": "foreign", "instruction": "x"})["outcome"], "protocol_error")
 
+    def test_answer_existing_result_needs_no_worker_or_new_score(self):
+        old = {"run_id": "previous-run", "task_id": "old", "node_id": "ags_fixture",
+               "outcome": "passed", "evaluation": {"passed": True}}
+        self.ceo._facts_for()["tasks"]["old"] = old
+        self.ceo.chat.call_tools = lambda *a, **kw: {"tool_calls": [{
+            "id": "answer", "name": "finish", "arguments": {"status": "answered",
+                "summary": "原六项已通过，只复述已有结果。", "workflow": "", "artifacts": []}}]}
+        with patch.object(self.ceo_module, "should_compress", return_value=False), patch.object(
+                self.ceo, "_settle_direct_reports", side_effect=AssertionError("answers must not score old work")):
+            result = self.ceo.talk("复述已有结果，不启动 Worker")
+        self.assertEqual(result, "原六项已通过，只复述已有结果。")
+        self.assertTrue(self.ceo._task_done)
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("settled", old)
+        self.assertEqual(self.events[-1][1]["status"], "answered")
+
+    def test_answer_cannot_bypass_current_run_execution_obligations(self):
+        self.assertIsNone(self.ceo._finish_rejection("answered"))
+        for outcome in ("queued", "interrupted", "unjudged", "passed"):
+            self.ceo._facts_for()["tasks"]["current"] = {
+                "task_id": "t", "run_id": "run-fixture", "outcome": outcome}
+            self.assertIsNotNone(self.ceo._finish_rejection("answered"))
+        # A continued execution also belongs to the current run.
+        self.ceo._facts_for()["tasks"]["current"].update(run_id="older", active_run_id="run-fixture")
+        self.assertIsNotNone(self.ceo._finish_rejection("answered"))
+
     def test_continue_recovers_missing_ledger_from_same_chat_checkpoint(self):
         checkpoint = {"session_name": "fixture", "node_id": "ags_fixture",
                       "task_id": "original-task", "run_id": "original-run",

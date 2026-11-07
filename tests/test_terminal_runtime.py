@@ -241,8 +241,10 @@ def test_turn_iteration_stop_is_resumable_only_with_matching_receipt(fake_instal
 def test_same_profile_different_sessions_run_in_parallel(fake_installation):
     store, events = fake_installation
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(runtime.run_hermes, "ags_140", text, execution_id="e-"+text, attempt_id="a-"+text, backend="pipe", timeout=10, store=store) for text in ("one", "two")]
-        results = [future.result(timeout=20) for future in futures]
+        # Native Python/SDK startup can consume almost ten seconds under load;
+        # this checks session isolation, not a ten-second wall-clock budget.
+        futures = [pool.submit(runtime.run_hermes, "ags_140", text, execution_id="e-"+text, attempt_id="a-"+text, backend="pipe", timeout=30, store=store) for text in ("one", "two")]
+        results = [future.result(timeout=45) for future in futures]
     assert [result["session_id"] for result in results] == ["session-one", "session-two"]
     assert all(result["exit_code"] == 0 for result in results)
     assert [result["output"] for result in results] == ["RESULT-one", "RESULT-two"]
@@ -428,6 +430,10 @@ def test_existing_profile_migrates_unattended_settings_without_replacing_model(t
     assert data["display"] == original["display"]
     assert data["agent"]["disabled_toolsets"] == ["other", "clarify"]
     assert data["session"]["terminal_continue"] is True
+    assert data["approvals"]["single_query_mode"] == "approve"
+    backups = list((home / "backups/adgs-runtime").glob("before-trusted-query-*.yaml"))
+    assert len(backups) == 1
+    assert yaml.safe_load(backups[0].read_text()) == original
     assert hermes._profile_ready("old")
 
 

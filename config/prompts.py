@@ -34,6 +34,7 @@ read_file 最多 3000 字符，文件超过 1MB 委派节点；list_files 只列
 
 【结束】
 finish.status=completed 仅用于当前轮全部必需任务已验收且交付物齐全；程序会检查任务账本。
+仅依据已有信息回答问题、没有本轮执行任务时，用 finish.status=answered 结束答复，不需要为制造验收记录派发 Worker；这不表示新的业务工作已完成。
 无法继续时可用 finish.status=blocked 或 failed，如实说明剩余缺项、原因和可恢复执行 ID；它们不表示成功。
 ask_user 挂起等待用户回答。不要把等待写成完成。"""
 
@@ -130,11 +131,11 @@ CEO_TOOL_FINISH = {
     "type": "function",
     "function": {
         "name": "finish",
-        "description": "结束当前任务。completed 必须有全部验收证据；blocked/failed 如实报告阻塞或缺项，可保留原执行继续。",
+        "description": "结束当前轮次。completed 必须有全部任务验收证据；answered 仅用于没有本轮执行任务的纯答复；blocked/failed 如实报告阻塞或缺项。",
         "parameters": {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["completed", "blocked", "failed"]},
+                "status": {"type": "string", "enum": ["completed", "answered", "blocked", "failed"]},
                 "summary": {"type": "string", "description": "最终总结及剩余缺项"},
                 "workflow": {"type": "string", "description": "完整工作流程：节点流转 + 每个节点的简要工作内容"},
                 "artifacts": {"type": "array", "items": {"type": "string"},

@@ -705,6 +705,24 @@ class NODE:
         """机械核验：交付物清单里形似路径的项逐个检查存在性（独立验收的证据输入）。"""
         from pathlib import Path
         block = task_section(task_md, "交付物") or ""
+        # Mesh contracts may name an output outside a formal deliverables
+        # heading, including long report-writing assignments. Only include
+        # explicit write targets, not paths mentioned as inputs/background.
+        declared = []
+        source_lines = task_md.splitlines()
+        for index, raw in enumerate(source_lines):
+            if not re.search(r"写入|只写|保存|落盘|生成|创建|输出文件|报告路径|\b(?:write|create|save|generate|output file|report path)\b", raw, re.I):
+                continue
+            if re.search(r"不得|禁止|不要|不能|严禁|只读|\b(?:not|never|forbid|readonly|read-only)\b", raw, re.I):
+                continue
+            # A target on its own line after an output declaration is
+            # unambiguous, even when the task includes many other paths.
+            if raw.rstrip().endswith((":", "：")) and index + 1 < len(source_lines):
+                target = source_lines[index + 1].strip().strip('`\"\'')
+                if re.fullmatch(r"(?:[A-Za-z]:[\\/]|\.{0,2}[/\\]|[\w-]+[/\\])[^\r\n<>|]+\.[A-Za-z0-9]{1,8}", target):
+                    declared.append(target)
+        if declared:
+            block += "\n" + "\n".join(dict.fromkeys(declared))
         if not block and len(task_md.splitlines()) <= 8 and re.search(
                 r"\b(?:write|create|save|generate)\b|写入|生成|保存", task_md, re.I):
             # Mesh contracts can be short natural-language instructions rather

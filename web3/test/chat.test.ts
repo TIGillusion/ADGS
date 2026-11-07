@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { eventToMessage, groupChatMessages, mapSessionMessage } from "@/lib/chat";
 import type { BusEvent, ChatMessage, SessionMessage } from "@/types";
+import { ceoGraphStatus, ceoPhaseLabel } from "@/lib/ceo";
 
 const ev = (type: string, data: Record<string, unknown>, ts = 1700000000): BusEvent => ({
   type: type as BusEvent["type"],
@@ -13,6 +14,14 @@ const ev = (type: string, data: Record<string, unknown>, ts = 1700000000): BusEv
 });
 
 describe("eventToMessage", () => {
+  it("纯答复的实时、历史和CEO图谱阶段一致", () => {
+    const live = eventToMessage(ev('chat.ceo_finish',{status:'answered',summary:'已有结果'}));
+    const history = mapSessionMessage({kind:'finish',status:'answered',text:'已有结果'});
+    expect(live).toMatchObject({kind:'finish',status:'answered',text:'已有结果'});
+    expect(history).toMatchObject({kind:'finish',status:'answered',text:'已有结果'});
+    expect(ceoPhaseLabel({engine:'hermes',role:'coordinator',phase:'answered'})).toBe('答复完成');
+    expect(ceoGraphStatus('answered')).toBe('done');
+  });
   it("chat.user → user 消息", () => {
     const m = eventToMessage(ev("chat.user", { text: "做个爬虫" }));
     expect(m).toMatchObject({ kind: "user", text: "做个爬虫" });

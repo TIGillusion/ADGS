@@ -105,3 +105,13 @@ it("CEO等下属时聊天显示等待阶段，入口打开固定CEO面板", () =
   expect(store.getState().selectedInst).toBe('ceo');
 });
 
+it("纯答复显示CEO答复，不宣称新的任务完成", () => {
+  (store as any).set({busy:false,snap:{ceo:{engine:'hermes',role:'coordinator',phase:'answered'}},
+    messages:[{id:'answer',kind:'finish',status:'answered',text:'已有六项均通过。',ts:1}],queue:[],queueLen:0});
+  render(<ChatView />);
+  expect(screen.getByText('CEO 答复')).toBeInTheDocument();
+  expect(screen.getByText('已有六项均通过。')).toBeInTheDocument();
+  expect(screen.queryByText('任务完成')).not.toBeInTheDocument();
+  expect(screen.queryByText('CEO 汇报受阻，任务待恢复')).not.toBeInTheDocument();
+});
+
