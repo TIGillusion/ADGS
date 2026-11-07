@@ -1012,8 +1012,14 @@ class Store {
         if (ending && messages[messages.length - 1]?.text !== ending.text) messages.push(ending);
       }
       let graph = graphFromSaved(res.graph ?? []);
-      // A complete transcript reconstructs rounds independently of legacy saved topology.
-      if (!graph.flow && res.events?.some(e => e.type === "chat.user")) graph = { ...graph, flow: flowFromLegacy(graphInit()) };
+      // A saved browser projection can contain a bug from an older open tab.
+      // Rebuild it from the complete durable transcript rather than trusting its
+      // seen-event cache, which would otherwise retain corrupted task inputs.
+      const ownEvents = (res.events ?? []).filter(e => !e.session || e.session === name);
+      const firstInputOrDispatch = ownEvents.find(e => ["chat.user", "graph.task", "graph.dispatch", "graph.instruction", "a2a.delegate"].includes(e.type));
+      if (firstInputOrDispatch?.type === "chat.user" || (!graph.flow && ownEvents.some(e => e.type === "chat.user"))) {
+        graph = { ...graph, flow: flowFromLegacy(graphInit()) };
+      }
       // 磁盘图谱可能落后于正在执行的会话。这里只补结构与状态，
       // 不重新插入聊天/日志，也不推进全局 SSE 游标（此数组不是完整事件流）。
       for (const ev of res.events ?? []) {

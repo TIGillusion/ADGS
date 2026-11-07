@@ -6,6 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BusEvent, StateSnapshot } from "@/types";
+import { applyEventToGraph, graphInit } from "@/lib/graph";
+import { displayGraph } from "@/lib/graphFlow";
 
 vi.mock("@/lib/api", () => {
   class ApiError extends Error {
@@ -533,6 +535,32 @@ it("历史会话重放恢复委派边及完整交互时间线", async () => {
   expect(store.getState().graph.a2aEdges.map(e => e.delegationId)).toEqual(["d1"]);
   expect(store.getDelegationEvents("d1")).toEqual(events.slice(1, 3));
   expect(store.getDelegationEvents("foreign")).toHaveLength(0);
+});
+
+it("完整持久事件修复旧页面保存的错误轮次内容，不受已处理事件缓存影响", async () => {
+  const events = [
+    ev('chat.user', {text:'用户的原始目标'}, 'rework'),
+    ev('graph.dispatch', {node:'manager',execution_id:'parent',task_id:'t1',parent:'ceo',task_md:'负责人任务'}, 'rework'),
+    ev('a2a.delegate', {delegation_id:'d1',node:'child',child_execution_id:'child-exec',parent:'manager',parent_execution_id:'parent',batch_id:'original',status:'running',summary:'原始子任务全文'}, 'rework'),
+    ev('graph.instruction', {node:'child',execution_id:'child-exec',task_id:'mesh_d1',parent:'manager',parent_execution_id:'parent',context_mode:'new',task_md:'原始子任务全文'}, 'rework'),
+    ev('a2a.delegate', {delegation_id:'d1',node:'child',child_execution_id:'child-exec',parent:'manager',parent_execution_id:'parent',batch_id:'repair',context_mode:'continue',status:'running',summary:'只修复图表标签'}, 'rework'),
+    ev('graph.instruction', {node:'child',execution_id:'child-exec',task_id:'mesh_d1',parent:'manager',parent_execution_id:'parent',batch_id:'repair',context_mode:'continue',instruction_id:'fix1',instruction:'只修复图表标签'}, 'rework'),
+    // Completion events intentionally have no context_mode, matching production.
+    ev('a2a.delegate', {delegation_id:'d1',node:'child',child_execution_id:'child-exec',parent:'manager',parent_execution_id:'parent',batch_id:'repair',status:'passed',summary:'标签修复完成'}, 'rework'),
+  ].map((e,i)=>({...e,id:5000+i}));
+  const correct=events.reduce((g,e)=>applyEventToGraph(g,e,e.ts*1000),graphInit());
+  const stale=structuredClone(correct.flow!);
+  const initial=stale.nodes.find(n=>n.type==='round'&&n.parent==='child@child-exec')!;
+  initial.extra.user_text='只修复图表标签';initial.extra.instruction='只修复图表标签';
+  const graph=displayGraph(correct).nodes.map(n=>({...n,parent:n.parent??'',extra:n.key==='ceo'?{...n.extra,flow_snapshot:stale}:n.extra}));
+  api.sessionLoad.mockResolvedValue({ok:true,messages:[],graph,events});
+  api.state.mockResolvedValue(snap());
+  await store.loadSession('rework');
+  const restored=displayGraph(store.getState().graph).nodes;
+  expect(restored.filter(n=>n.type==='round'&&n.parent==='child@child-exec').map(n=>n.extra.user_text)).toEqual(['原始子任务全文','只修复图表标签']);
+  expect(restored.filter(n=>n.type==='node'&&n.extra.execution_id==='child-exec')).toHaveLength(1);
+  await store.loadSession('rework');
+  expect(displayGraph(store.getState().graph).nodes).toEqual(restored);
 });
 
 it("旧后端未确认引导模式时，不把普通排队误报为已接受打断引导", async () => {
