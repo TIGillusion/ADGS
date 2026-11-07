@@ -82,3 +82,18 @@ test("同一种群的不同实例不串色，旧的传输不会因刷新复活",
   await page.getByRole("button",{name:"演化图谱",exact:true}).click();
   await expect.poll(()=>traffic(page)).toBe(0);
 });
+
+test("聊天顶部暂停、受阻与失败使用对应状态色，等待下属不显示执行旋转",async({page})=>{
+  await page.getByRole("button",{name:"对话工作台",exact:true}).click();
+  const badge=page.getByTestId("ceo-status");
+  for(const [phase,status,variable] of [["paused","interrupted","--canvas-waiting"],["blocked","blocked","--canvas-waiting"],["failed","failed","--canvas-failed"],["completed","done","--canvas-done"],["idle","idle","--canvas-idle"],["waiting_children","delegating","--canvas-delegating"]]) {
+    await event(page,"chat.ceo_activity",{execution_id:"ceo-fixture",phase,updated_at:Date.now()/1000});
+    await expect(badge).toHaveAttribute("data-status",status);
+    const expected=await page.evaluate(variable=>{
+      const probe=document.createElement("span");probe.style.color=`var(${variable})`;document.body.append(probe);
+      const color=getComputedStyle(probe).color;probe.remove();return color;
+    },variable);
+    await expect(badge).toHaveCSS("color",expected);
+    await expect(badge.locator(".animate-spin")).toHaveCount(0);
+  }
+});

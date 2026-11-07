@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { NodesView } from "@/components/NodesView";
 import { OverviewView } from "@/components/OverviewView";
+import { ChatView } from "@/components/ChatView";
 import { store } from "@/lib/store";
 import { applyEventToGraph, graphInit } from "@/lib/graph";
 import { displayGraph } from "@/lib/graphFlow";
@@ -32,6 +33,24 @@ describe("颜色表达后端数值",()=>{
     render(<OverviewView/>);
     const card=screen.getByText("平均适应度").closest(".surface")!;
     expect(card).toHaveTextContent("90.0");expect(card).toHaveTextContent("平均成功率 80%");
+  });
+});
+describe("聊天 CEO 状态配色",()=>{
+  it.each([
+    ["paused","interrupted","--canvas-waiting"],
+    ["blocked","blocked","--canvas-waiting"],
+    ["failed","failed","--canvas-failed"],
+    ["completed","done","--canvas-done"],
+    ["idle","idle","--canvas-idle"],
+    ["unexpected","unknown","--canvas-idle"],
+    ["waiting_children","delegating","--canvas-delegating"],
+  ])("%s 使用真实状态色而非固定绿点",(phase,status,color)=>{
+    (store as unknown as {set:(state:unknown)=>void}).set({busy:phase==="waiting_children",messages:[],queue:[],queueLen:0,projects:[],projectSupport:false,viewSession:null,liveSession:null,snap:{ceo:{phase}}});
+    render(<ChatView/>);
+    const badge=screen.getByTestId("ceo-status");
+    expect(badge).toHaveAttribute("data-status",status);
+    expect(badge.getAttribute("style")).toContain(`var(${color})`);
+    expect(badge.querySelector(".animate-spin")).toBeNull();
   });
 });
 describe("图谱执行状态精确投影",()=>{

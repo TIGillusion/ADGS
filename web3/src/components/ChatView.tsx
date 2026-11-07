@@ -26,7 +26,8 @@ import {
 import { store, useAppState } from "@/lib/store";
 import { fmtArgs, fmtTime, nodeIdLabel } from "@/lib/format";
 import { groupChatMessages } from "@/lib/chat";
-import { ceoPhaseLabel } from "@/lib/ceo";
+import { ceoGraphStatus, ceoPhaseLabel } from "@/lib/ceo";
+import { GRAPH_STATUS } from "@/lib/executionState";
 import { AutoScroll, Button, Chip, Code, Collapsible, Empty, Spinner } from "@/components/ui";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type { ChatMessage, QueueItem } from "@/types";
@@ -579,6 +580,8 @@ function CommandPanel({ query, onPick }: { query: string; onPick: (cmd: string) 
 
 export function ChatView() {
   const ceo = useAppState((s) => s.snap?.ceo);
+  const ceoStatus = ceoGraphStatus(ceo?.phase);
+  const ceoColor = `var(${GRAPH_STATUS[ceoStatus].color})`;
   const messages = useAppState((s) => s.messages);
   const busy = useAppState((s) => s.busy);
   const recoveryChat = useAppState((s) => Boolean(s.snap?.worker_hold));
@@ -697,15 +700,11 @@ export function ChatView() {
             队列 {queueLen}
           </button>
           {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
-          {busy ? (
-            <span className="flex items-center gap-2 rounded-full border border-life-500/30 bg-life-500/10 px-3 py-1 text-[11.5px] text-life-300">
-              <Spinner size={11} /> {ceoPhaseLabel(ceo, true)}
-            </span>
-          ) : (
-            <span className="flex items-center gap-2 rounded-full border border-ink-600/25 px-3 py-1 text-[11.5px] text-ink-500">
-              <span className="dot" style={{ background: "#3ecf7f", width: 6, height: 6 }} /> {ceoPhaseLabel(ceo)}
-            </span>
-          )}
+          <span data-testid="ceo-status" data-status={ceoStatus} className="flex items-center gap-2 rounded-full border px-3 py-1 text-[11.5px]"
+            style={{color:ceoColor,borderColor:`color-mix(in srgb, ${ceoColor} 30%, transparent)`,background:`color-mix(in srgb, ${ceoColor} 8%, transparent)`}}>
+            {busy && ceoStatus === "running" ? <Spinner size={11}/> : <span className="dot" style={{background:"currentColor",width:6,height:6}}/>}
+            {ceoPhaseLabel(ceo,busy)}
+          </span>
         </div>
       </div>
 
