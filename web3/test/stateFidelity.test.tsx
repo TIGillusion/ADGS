@@ -36,6 +36,11 @@ describe("颜色表达后端数值",()=>{
   });
 });
 describe("聊天 CEO 状态配色",()=>{
+  it("没有真实发送时间的旧输入明确说明时间未记录",()=>{
+    (store as unknown as {set:(state:unknown)=>void}).set({busy:false,messages:[{id:'old',kind:'user',text:'旧输入',ts:0}],queue:[],queueLen:0,projects:[],projectSupport:false,viewSession:null,liveSession:null,snap:{ceo:{phase:'idle'}}});
+    render(<ChatView/>);
+    expect(screen.getByText('时间未记录')).toBeVisible();
+  });
   it.each([
     ["paused","interrupted","--canvas-waiting"],
     ["blocked","blocked","--canvas-waiting"],

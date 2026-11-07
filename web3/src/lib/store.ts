@@ -10,7 +10,7 @@ import { reconcileGraphSnapshot } from "@/lib/graphSnapshot";
 import { useSyncExternalStore } from "react";
 import { api, ApiError } from "@/lib/api";
 import { groupLegacySessions } from "@/lib/legacyProjects";
-import { eventToMessage, mapSessionMessage, nextMsgId } from "@/lib/chat";
+import { eventToMessage, mapSessionMessages, nextMsgId } from "@/lib/chat";
 import {
   applyEventToGraph,
   CEO_KEY,
@@ -1015,9 +1015,8 @@ class Store {
       if (version !== this.loadVersion) return;
       // 2026-09-03：后端把 CEO 话术（ask/report/finish）还原为对应 kind，
       // 历史恢复能看到 CEO 提问/进度汇报/最终结论，不再只有工具
-      const messages: ChatMessage[] = (res.messages ?? []).map((m) =>
-        mapSessionMessage(m),
-      );
+      const ownEvents = (res.events ?? []).filter(e => !e.session || e.session === name);
+      const messages = mapSessionMessages(res.messages ?? [], ownEvents);
       const lastTurnEvent = [...(res.events ?? [])].reverse().find(e =>
         (!e.session || e.session === name) && ['chat.user','chat.recovery_user','chat.ceo_finish','chat.ceo_end'].includes(e.type));
       if (lastTurnEvent?.type === 'chat.ceo_end') {
@@ -1028,7 +1027,6 @@ class Store {
       // A saved browser projection can contain a bug from an older open tab.
       // Rebuild it from the complete durable transcript rather than trusting its
       // seen-event cache, which would otherwise retain corrupted task inputs.
-      const ownEvents = (res.events ?? []).filter(e => !e.session || e.session === name);
       const firstInputOrDispatch = ownEvents.find(e => ["chat.user", "graph.task", "graph.dispatch", "graph.instruction", "a2a.delegate"].includes(e.type));
       if (firstInputOrDispatch?.type === "chat.user" || (!graph.flow && ownEvents.some(e => e.type === "chat.user"))) {
         graph = { ...graph, flow: flowFromLegacy(graphInit()) };

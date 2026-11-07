@@ -12,7 +12,7 @@ export function nextMsgId(): string {
 
 /** 历史会话消息（后端 _session_messages）→ 聊天渲染消息 */
 export function mapSessionMessage(m: SessionMessage, id?: string): ChatMessage {
-  const ts = Date.now() / 1000;
+  const ts = typeof m.ts === "number" && Number.isFinite(m.ts) && m.ts > 0 ? m.ts : 0;
   const base = { id: id ?? nextMsgId(), ts };
   switch (m.kind) {
     case "user":
@@ -35,6 +35,26 @@ export function mapSessionMessage(m: SessionMessage, id?: string): ChatMessage {
     default:
       return { ...base, kind: "text", text: m.text };
   }
+}
+
+/** Restore recorded input times; missing or ambiguous history stays unknown. */
+export function mapSessionMessages(messages: SessionMessage[], events: BusEvent[]): ChatMessage[] {
+  const counts = new Map<string, number>();
+  const times = new Map<string, number[]>();
+  for (const m of messages) if (m.kind === "user") counts.set(m.text || "", (counts.get(m.text || "") || 0) + 1);
+  for (const e of events) {
+    if (!["chat.user", "chat.recovery_user"].includes(e.type) || !Number.isFinite(e.ts) || e.ts <= 0) continue;
+    const text = String(e.data.text ?? "");
+    const values = times.get(text);
+    if (values) values.push(e.ts); else times.set(text, [e.ts]);
+  }
+  // A partial legacy transcript cannot identify which repeated input was sent.
+  for (const [text, values] of times) if (values.length !== counts.get(text)) times.delete(text);
+  return messages.map(m => {
+    const mapped = mapSessionMessage(m);
+    const recorded = m.kind === "user" ? times.get(m.text || "")?.shift() : undefined;
+    return !mapped.ts && recorded ? { ...mapped, ts: recorded } : mapped;
+  });
 }
 
 /** 一条 SSE 事件是否应显示在对话流中 */

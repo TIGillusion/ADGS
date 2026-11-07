@@ -209,7 +209,7 @@ function UserMsg({ m }: { m: ChatMessage }) {
         <div className="whitespace-pre-wrap break-words text-[13.5px] leading-6 text-ink-100">
           {m.text}
         </div>
-        <div className="mt-1 text-right text-[10px] text-ink-600">{fmtTime(m.ts)}</div>
+        <div className="mt-1 text-right text-[10px] text-ink-600">{m.ts > 0 ? fmtTime(m.ts) : "时间未记录"}</div>
       </div>
     </div>
   );

@@ -576,6 +576,17 @@ it("历史会话重放恢复委派边及完整交互时间线", async () => {
   expect(store.getDelegationEvents("foreign")).toHaveLength(0);
 });
 
+it("历史输入时间依据本会话持久事件，重开不变成当前时间或另一会话时间", async () => {
+  const original={...ev('chat.user',{text:'保存的输入'},'input-time'),ts:1700000000};
+  api.sessionLoad.mockResolvedValue({ok:true,messages:[{kind:'user',text:'保存的输入'}],graph:[],events:[original,{...original,id:original.id!+1,session:'other',ts:1700000900}]});
+  api.state.mockResolvedValue(snap());
+  await store.loadSession('input-time');
+  expect(store.getState().messages[0].ts).toBe(1700000000);
+  vi.advanceTimersByTime(30000);
+  await store.loadSession('input-time');
+  expect(store.getState().messages[0].ts).toBe(1700000000);
+});
+
 it("完整持久事件修复旧页面保存的错误轮次内容，不受已处理事件缓存影响", async () => {
   const events = [
     ev('chat.user', {text:'用户的原始目标'}, 'rework'),

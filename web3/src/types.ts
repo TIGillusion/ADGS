@@ -262,6 +262,8 @@ export interface SessionGraphItem {
 }
 
 export interface SessionMessage {
+  /** Original send time when recorded; absent legacy times remain unknown. */
+  ts?: number;
   /** 2026-09-03：后端把 CEO 话术工具（ask_user/report/finish）还原为
    *  对应话术 kind，历史恢复不再退化成工具条目；旧会话文件仍只有
    *  user/text/tool 三种 */

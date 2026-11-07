@@ -97,3 +97,17 @@ test("聊天顶部暂停、受阻与失败使用对应状态色，等待下属�
     await expect(badge.locator(".animate-spin")).toHaveCount(0);
   }
 });
+
+test("历史输入保留实际发送时间，无记录的旧输入明确显示未知",async({page})=>{
+  await page.route("**/api/session/load",route=>route.fulfill({json:{ok:true,running:false,messages:[{kind:"user",text:"有真实时间的旧输入"},{kind:"user",text:"未保存时间的旧输入"}],graph:[],events:[{id:123456,session:"time-history",type:"chat.user",ts:1700000000,data:{text:"有真实时间的旧输入"}}]}}));
+  const expected=await page.evaluate(()=>{
+    const date=new Date(1700000000*1000),pad=(n:number)=>String(n).padStart(2,"0");
+    return `${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  });
+  for(let i=0;i<2;i++) {
+    await page.evaluate(()=>window.__adgs_store!.loadSession("time-history"));
+    await expect(page.getByText("有真实时间的旧输入",{exact:true})).toBeVisible();
+    await expect(page.getByText(expected,{exact:true})).toBeVisible();
+    await expect(page.getByText("时间未记录",{exact:true})).toBeVisible();
+  }
+});

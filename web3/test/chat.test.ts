@@ -3,7 +3,7 @@
 // ============================================================
 
 import { describe, expect, it } from "vitest";
-import { eventToMessage, groupChatMessages, mapSessionMessage } from "@/lib/chat";
+import { eventToMessage, groupChatMessages, mapSessionMessage, mapSessionMessages } from "@/lib/chat";
 import type { BusEvent, ChatMessage, SessionMessage } from "@/types";
 import { ceoGraphStatus, ceoPhaseLabel } from "@/lib/ceo";
 
@@ -156,6 +156,19 @@ describe("eventToMessage", () => {
 // ---------------- 历史会话消息映射（2026-09-03：CEO 话术还原） ----------------
 
 describe("mapSessionMessage", () => {
+  it("没有发送时间的历史消息不伪造为当前时间",()=>{
+    expect(mapSessionMessage({kind:"user",text:"旧消息"}).ts).toBe(0);
+  });
+  it("重开后依据持久用户事件恢复发送时间，保留消息全文",()=>{
+    const events=[{...ev("chat.user",{text:"真正的输入"}),ts:1700000000}];
+    expect(mapSessionMessages([{kind:"user",text:"真正的输入"}],events)[0]).toMatchObject({ts:1700000000,text:"真正的输入"});
+  });
+  it("重复相同输入依发生次序匹配，历史事件缺失时不猜测",()=>{
+    const messages:SessionMessage[]=[{kind:"user",text:"继续"},{kind:"user",text:"继续"}];
+    const events=[{...ev("chat.user",{text:"继续"}),ts:100},{...ev("chat.user",{text:"继续"}),ts:200}];
+    expect(mapSessionMessages(messages,events).map(m=>m.ts)).toEqual([100,200]);
+    expect(mapSessionMessages(messages,events.slice(1)).map(m=>m.ts)).toEqual([0,0]);
+  });
   it("user/tool 原样映射", () => {
     const u: SessionMessage = { kind: "user", text: "做个爬虫" };
     expect(mapSessionMessage(u, "id-u")).toMatchObject({ kind: "user", text: "做个爬虫", id: "id-u" });
