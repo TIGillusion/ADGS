@@ -234,9 +234,9 @@ export function AutoScroll({ children, className = "" }: { children: React.React
       {/* 释放态的「回到底部」按钮：sticky 贴住滚动视口底部（absolute 会随内容
           滚出视野；sticky bottom 始终可见且不影响内容流） */}
       {detached && (
-        <div className="pointer-events-none sticky bottom-3 flex justify-end pr-4">
+          <div className="pointer-events-none sticky bottom-3 flex h-0 justify-end overflow-visible pr-4">
           <button
-            className="pointer-events-auto flex cursor-pointer items-center gap-1 rounded-full border border-ink-600/30 bg-abyss-850/90 px-3 py-1.5 text-[11px] text-ink-300 shadow-lg transition-colors hover:border-life-400/50 hover:text-life-300"
+              className="pointer-events-auto flex h-fit -translate-y-full cursor-pointer items-center gap-1 rounded-full border border-ink-600/30 bg-abyss-850/90 px-3 py-1.5 text-[11px] text-ink-300 shadow-lg transition-colors hover:border-life-400/50 hover:text-life-300"
             onClick={() => {
               const el = ref.current;
               if (!el) return;

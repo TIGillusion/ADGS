@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("execution terminal: incremental ANSI output, events, acceptance and replay", async ({ page }) => {
+test("execution terminal: incremental ANSI output, events, acceptance and replay", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.request.post("/e2e/reset");
@@ -21,13 +21,18 @@ test("execution terminal: incremental ANSI output, events, acceptance and replay
   await page.request.post("/e2e/terminal/push", { data: { data: "\r\n\x1b[32mLIVE OUTPUT ARRIVED\x1b[0m\r\n", evaluate: true } });
   await expect(page.locator(".xterm-rows")).toContainText("LIVE OUTPUT ARRIVED");
   await page.getByRole("button", { name: "展开执行面板" }).click();
-  await page.screenshot({ path: "test/terminal-observatory.png", fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("terminal-observatory.png"), fullPage: true });
   await page.getByRole("button", { name: "执行事件", exact: false }).click();
   await expect(page.locator(".execution-event").getByText("节点决策", { exact: true })).toBeVisible();
+  await page.getByRole("textbox",{name:"搜索执行事件"}).fill("节点决策");
+  await expect(page.locator(".execution-event").getByText("节点决策",{exact:true})).toBeVisible();
+  await page.getByRole("textbox",{name:"搜索执行事件"}).fill("不存在的执行事件");
+  await expect(page.getByText("未找到匹配事件，请调整搜索内容")).toBeVisible();
+  await page.getByRole("textbox",{name:"搜索执行事件"}).fill("");
   await page.getByRole("button", { name: "验收", exact: true }).click();
   await expect(page.getByText("验收通过", { exact: true })).toBeVisible();
   await expect(page.locator(".acceptance-card").getByText("构建检查", { exact: true })).toBeVisible();
-  await page.screenshot({ path: "test/terminal-acceptance.png", fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("terminal-acceptance.png"), fullPage: true });
   await page.getByRole("button", { name: "实时终端", exact: true }).click();
   await expect(page.locator(".xterm-rows")).toContainText("LIVE OUTPUT ARRIVED");
   await page.getByRole("textbox", { name: "搜索终端" }).fill("LIVE OUTPUT");

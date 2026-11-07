@@ -99,10 +99,36 @@ it("发送默认排队，待处理消息上的引导原位提升该条目", asyn
 it("CEO等下属时聊天显示等待阶段，入口打开固定CEO面板", () => {
   (store as any).set({busy:true,snap:{ceo:{engine:'hermes',role:'coordinator',phase:'waiting_children',execution_id:'ceo-test'}}});
   render(<ChatView />);
-  expect(screen.getByText('等待下属汇报')).toBeInTheDocument();
+  expect(screen.getAllByText(/等待下属汇报/).length).toBeGreaterThan(0);
   expect(screen.queryByText('CEO 正在决策')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'查看 CEO 协调活动'}));
   expect(store.getState().selectedInst).toBe('ceo');
+});
+
+it("中文输入法确认和 Shift+Enter 不提交，普通 Enter 提交一次", async () => {
+  vi.mocked(api.chat).mockReset().mockResolvedValue({ok:true,queued:true});
+  (store as any).set({viewSession:'ime-chat',liveSession:'ime-chat',busy:true,projectSupport:false,messages:[],queue:[],queueLen:0,snap:null});
+  render(<ChatView/>);
+  const input=screen.getByRole('textbox',{name:'消息内容'});
+  fireEvent.change(input,{target:{value:'先检查已有结果'}});
+  fireEvent.keyDown(input,{key:'Enter',isComposing:true});
+  fireEvent.keyDown(input,{key:'Enter',keyCode:229});
+  fireEvent.keyDown(input,{key:'Enter',shiftKey:true});
+  expect(api.chat).not.toHaveBeenCalled();
+  fireEvent.keyDown(input,{key:'Enter'});
+  await waitFor(()=>expect(api.chat).toHaveBeenCalledTimes(1));
+});
+
+it("选择命令后保留会话草稿，Escape 关闭队列", () => {
+  (store as any).set({viewSession:'command-draft',busy:false,messages:[],queue:[],queueLen:0,snap:null});
+  render(<ChatView/>);
+  fireEvent.change(screen.getByRole('textbox',{name:'消息内容'}),{target:{value:'/sta'}});
+  fireEvent.click(screen.getByRole('button',{name:'/status 系统状态'}));
+  expect(store.draftFor('command-draft')).toBe('/status ');
+  fireEvent.click(screen.getByTitle('任务队列（查看 / 编辑 / 撤销排队消息）'));
+  expect(screen.getByText(/队列为空/)).toBeInTheDocument();
+  fireEvent.keyDown(window,{key:'Escape'});
+  expect(screen.queryByText(/队列为空/)).not.toBeInTheDocument();
 });
 
 it("纯答复显示CEO答复，不宣称新的任务完成", () => {

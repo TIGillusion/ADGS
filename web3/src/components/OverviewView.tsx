@@ -121,8 +121,8 @@ export function OverviewView() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
+    <div className="overview-view flex h-full min-h-0 flex-1 flex-col">
+      <div className="workbench-header flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
         <div className="flex items-center gap-3">
           <h2 className="font-display text-[15px] font-semibold text-ink-100">系统概览</h2>
           <Chip
@@ -159,7 +159,7 @@ export function OverviewView() {
                 </>
               }
               sub="承载量随平均适应度动态伸缩"
-              accent="#5ff2d6"
+              accent="var(--color-life-400)"
             >
               {snap?.population && (
                 <div className="mt-2.5">
@@ -174,7 +174,7 @@ export function OverviewView() {
               value={stats ? stats.avgScore.toFixed(1) : "—"}
               sub={stats ? `平均成功率 ${pct(stats.avgRate)}` : "等待节点数据"}
               accent={
-                !stats ? "#eaf1fd" : stats.avgScore >= 80 ? "#3ecf7f" : stats.avgScore >= 60 ? "#2fe0bd" : stats.avgScore >= 40 ? "#fbbf24" : "#f4535f"
+                !stats ? "var(--ink-100)" : stats.avgScore >= 80 ? "var(--color-ok-500)" : stats.avgScore >= 60 ? "var(--color-life-500)" : stats.avgScore >= 40 ? "var(--color-warn-400)" : "var(--color-danger-500)"
               }
             >
               {stats && (

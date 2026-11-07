@@ -79,6 +79,13 @@ const C = {
 // getComputedStyle。
 
 interface ThemeColors {
+  ceo: string;
+  waiting: string;
+  running: string;
+  delegating: string;
+  done: string;
+  failed: string;
+  selection: string;
 
   nodeBg: string;
 
@@ -133,6 +140,13 @@ function themeColors(): ThemeColors {
   themeCacheKey = key;
 
   themeCache = {
+    ceo: cssVar("--canvas-ceo", C.ceo),
+    waiting: cssVar("--canvas-waiting", C.waiting),
+    running: cssVar("--canvas-running", C.running),
+    delegating: cssVar("--canvas-delegating", C.delegating),
+    done: cssVar("--canvas-done", C.done),
+    failed: cssVar("--canvas-failed", C.failed),
+    selection: cssVar("--canvas-selection", C.sel),
 
     nodeBg: cssVar("--canvas-node-bg", "rgba(10, 18, 32, 0.92)"),
 
@@ -2318,21 +2332,21 @@ export class GraphCanvas {
 
     switch (n.status) {
 
-      case "waiting": return C.waiting;
+      case "waiting": return themeColors().waiting;
 
-      case "running": return C.running;
+      case "running": return themeColors().running;
 
-      case "delegating": return C.delegating;
+      case "delegating": return themeColors().delegating;
 
-      case "done": return C.done;
+      case "done": return themeColors().done;
 
-      case "failed": return C.failed;
+      case "failed": return themeColors().failed;
 
       case "blocked":
 
       case "unjudged":
 
-      case "interrupted": return C.waiting;
+      case "interrupted": return themeColors().waiting;
 
       default: return themeColors().idle;
 
@@ -2912,7 +2926,7 @@ export class GraphCanvas {
 
       if (incident) {
 
-        ctx.strokeStyle = C.sel;
+        ctx.strokeStyle = themeColors().selection;
 
         ctx.globalAlpha = 0.4;
 
@@ -2990,7 +3004,7 @@ export class GraphCanvas {
 
     const color =
 
-      n.type === "ceo" ? C.ceo : n.type === "round" ? C.round : n.type === "task" ? C.task : this.statusColor(n);
+      n.type === "ceo" ? themeColors().ceo : n.type === "round" ? themeColors().round : n.type === "task" ? themeColors().task : this.statusColor(n);
 
     const active = ["waiting", "running", "delegating"].includes(n.status) && n.type === "node";
 
@@ -3300,7 +3314,7 @@ export class GraphCanvas {
 
       this.roundRect(ctx, -w / 2 - 4, -h / 2 - 4, w + 8, h + 8, 13);
 
-      ctx.strokeStyle = C.sel;
+      ctx.strokeStyle = themeColors().selection;
 
       ctx.lineWidth = 1.4;
 

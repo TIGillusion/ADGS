@@ -87,14 +87,14 @@ function GraphTooltip({
 
 function Legend() {
   const items: { c: string; t: string }[] = [
-    { c: "#f5c96b", t: "CEO" },
-    { c: "#8be9ff", t: "轮次" },
-    { c: "#a5edff", t: "批次" },
-    { c: "#2fe0bd", t: "执行中" },
-    { c: "#fbbf24", t: "排队" },
-    { c: "#9a72f5", t: "委派" },
-    { c: "#3ecf7f", t: "完成" },
-    { c: "#f4535f", t: "失败" },
+    { c: "var(--color-ceo-400)", t: "CEO" },
+    { c: "var(--color-pulse-400)", t: "轮次" },
+    { c: "var(--color-pulse-300)", t: "批次" },
+    { c: "var(--color-life-500)", t: "执行中" },
+    { c: "var(--color-warn-400)", t: "排队" },
+    { c: "var(--color-gene-500)", t: "委派" },
+    { c: "var(--color-ok-500)", t: "完成" },
+    { c: "var(--color-danger-500)", t: "失败" },
   ];
   return (
     <div className="surface-glass pointer-events-none absolute bottom-4 left-4 z-20 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-xl px-3.5 py-2.5">
@@ -126,7 +126,7 @@ function GraphToolbar({
       <div className="mr-2 hidden items-center gap-2 md:flex">
         {stats.active > 0 && (
           <span className="flex items-center gap-1.5 rounded-full border border-life-500/30 bg-life-500/10 px-2.5 py-1 text-[11px] text-life-300">
-            <span className="dot dot-pulse" style={{ background: "#2fe0bd", width: 6, height: 6 }} />
+            <span className="dot dot-pulse" style={{ background: "var(--color-life-500)", width: 6, height: 6 }} />
             {stats.active} 个节点活动
           </span>
         )}
@@ -206,6 +206,8 @@ export function GraphView({ embedded }: { embedded?: boolean }) {
   const [hover, setHover] = useState<{ key: string; x: number; y: number } | null>(null);
   const graph = useAppState((s) => displayGraph(s.graph));
   const viewSession = useAppState((s) => s.viewSession);
+  const projects = useAppState((s) => s.projects);
+  const conversation = projects.flatMap(project => project.sessions).find(session => session.id === viewSession);
   const focusRound = useAppState((s) => s.graphFocusRound);
   const boot = useAppState((s) => s.boot);
   const stats = useMemo(() => {
@@ -254,11 +256,11 @@ export function GraphView({ embedded }: { embedded?: boolean }) {
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col">
       {!embedded && (
-        <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
-          <div className="flex items-center gap-3">
+        <div className="graph-header flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
+          <div className="graph-heading flex items-center gap-3">
             <h2 className="font-display text-[15px] font-semibold text-ink-100">演化图谱</h2>
             <span className="text-[11.5px] text-ink-600">
-              任务分解树 · 实时演化{viewSession ? `（历史视图 · ${viewSession}）` : ""}
+              {conversation?.title || "任务分解与委派关系"}
               {focusRound ? ` · 已聚焦 ${focusRound.replace("round-", "轮 ")}` : ""}
             </span>
           </div>
@@ -281,6 +283,7 @@ export function GraphView({ embedded }: { embedded?: boolean }) {
           </div>
         )}
         {hover && <GraphTooltip pos={hover} nodeKey={hover.key} />}
+        {!embedded && <div className="graph-help">滚轮缩放 · 拖拽平移 · 点击节点查看详情<br/>轮次记录输入，序号记录每批委派</div>}
         <Legend />
         {embedded && (
           <div className="absolute right-3 top-3 z-20">

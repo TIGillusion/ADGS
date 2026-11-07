@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Share2,
   Sun,
   X,
@@ -208,11 +210,21 @@ function Main() {
 }
 
 export default function App() {
-  const [inspector, setInspector] = useState(true);
+  const [inspector, setInspector] = useState(() => { try { return localStorage.getItem("adgs_inspector") === "true"; } catch { return false; } });
+  const [sidebar, setSidebar] = useState(() => { try { return localStorage.getItem("adgs_sidebar") !== "false" && window.innerWidth > 760; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem("adgs_inspector", String(inspector)); } catch { /* storage unavailable */ } }, [inspector]);
+  useEffect(() => { try { localStorage.setItem("adgs_sidebar", String(sidebar)); } catch { /* storage unavailable */ } }, [sidebar]);
+  useEffect(() => {
+    const close = (e: KeyboardEvent) => { if (e.key === "Escape" && window.innerWidth <= 760) setSidebar(false); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, []);
   const view = useAppState(s=>s.view), selected = useAppState(s=>s.selectedInst);
   return (
-    <div className="project-shell relative flex h-full w-full overflow-hidden">
-      <ProjectSidebar footer={<><ThemeToggle /><SseIndicator /></>} onInspector={()=>setInspector(v=>!v)} />
+    <div className={`project-shell ${sidebar ? "sidebar-open" : "sidebar-closed"} relative flex h-full w-full overflow-hidden`}>
+      <button className="sidebar-toggle" aria-label={sidebar ? "收起项目导航" : "展开项目导航"} aria-expanded={sidebar} aria-controls="project-navigation" title={sidebar ? "收起项目导航" : "展开项目导航"} onClick={() => setSidebar(v => !v)}>{sidebar ? <PanelLeftClose size={18}/> : <PanelLeftOpen size={18}/>}</button>
+      {sidebar && <button className="sidebar-backdrop" aria-label="关闭项目导航" onClick={() => setSidebar(false)}/>}
+      <ProjectSidebar onNavigate={() => { if (window.innerWidth <= 760) setSidebar(false); }} footer={<><ThemeToggle /><SseIndicator /></>} onInspector={()=>setInspector(v=>!v)} />
       <Main />
       {inspector && view === "chat" && !selected && <ProjectInspector onClose={()=>setInspector(false)} />}
       <Toasts />

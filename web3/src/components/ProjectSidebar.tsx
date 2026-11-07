@@ -1,15 +1,17 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Activity, Archive, ArchiveRestore, Check, ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Info, MessageSquare, MoreHorizontal, Network, Pencil, Plus, Search, Share2, X } from "lucide-react";
 import { store, useAppState } from "@/lib/store";
 import type { ViewId } from "@/types";
 
 type Editor = { kind: 'project' | 'project-name' | 'chat-name'; id?: string; name: string; workspace: string };
-export function ProjectSidebar({footer,onInspector}: {footer:ReactNode;onInspector:()=>void}) {
+export function ProjectSidebar({footer,onInspector,onNavigate}: {footer:ReactNode;onInspector:()=>void;onNavigate?:()=>void}) {
   const projects=useAppState(s=>s.projects),supported=useAppState(s=>s.projectSupport);
   const selected=useAppState(s=>s.viewSession),view=useAppState(s=>s.view),snap=useAppState(s=>s.snap);
-  const [closed,setClosed]=useState<Set<string>>(new Set());
+  const [closed,setClosed]=useState<Set<string>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem('adgs_closed_projects') || '[]'); return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []); } catch { return new Set(); } });
   const [showArchive, setShowArchive] = useState(false);
   const [query,setQuery]=useState(''),[editor,setEditor]=useState<Editor|null>(null),[saving,setSaving]=useState(false),[menu,setMenu]=useState<string|null>(null);
+  useEffect(() => { try { localStorage.setItem('adgs_closed_projects', JSON.stringify([...closed])); } catch { /* storage unavailable */ } }, [closed]);
+  useEffect(() => { const close = (e: KeyboardEvent) => { if(e.key === 'Escape') setMenu(null); }; window.addEventListener('keydown',close); return () => window.removeEventListener('keydown',close); }, []);
   const activeProjects = projects.filter(project => !project.archived);
   const current = activeProjects.find(project => project.sessions.some(chat => chat.id === selected && !chat.archived));
   const archivedCount = projects.reduce((count, project) =>
@@ -30,11 +32,11 @@ export function ProjectSidebar({footer,onInspector}: {footer:ReactNode;onInspect
   return <>
     <aside className="app-rail">
       <button className="rail-brand" title="ADGS" onClick={()=>store.setView('chat')}><span>A</span></button>
-      <nav aria-label="工作台导航">{nav.map(n=><button key={n.id} aria-label={n.label} title={n.label} className={view===n.id?'active':''} onClick={()=>store.setView(n.id)}>{n.icon}<span className="sr-only">{n.label}</span></button>)}</nav>
+      <nav aria-label="工作台导航">{nav.map(n=><button key={n.id} aria-label={n.label} title={n.label} className={view===n.id?'active':''} onClick={()=>{store.setView(n.id);onNavigate?.();}}>{n.icon}<span className="sr-only">{n.label}</span></button>)}</nav>
       <button className="rail-info" aria-label="显示或隐藏项目资料" title="项目资料" onClick={onInspector}><Info size={18}/></button>
       <div className="rail-avatar" title="全局共享节点种群">群</div>
     </aside>
-    <aside className="project-sidebar">
+    <aside className="project-sidebar" id="project-navigation" aria-label="项目和会话">
       <div className="project-sidebar-heading"><strong>ADGS <span>Workspace</span></strong><button aria-label="新建项目" title="新建项目" disabled={!supported} onClick={()=>setEditor({kind:'project',name:'',workspace:snap?.workspace||''})}><FolderPlus size={18}/></button></div>
       <button className="new-chat" disabled={!supported} onClick={newChat}><Pencil size={17}/><span>新会话</span><Plus size={15}/></button>
       <div className="project-search"><Search size={15} aria-hidden="true"/>
@@ -46,6 +48,7 @@ export function ProjectSidebar({footer,onInspector}: {footer:ReactNode;onInspect
         {supported && <button aria-pressed={showArchive} onClick={()=>{setShowArchive(true);setMenu(null);}}><Archive size={13}/>已归档 <span>{archivedCount}</span></button>}
       </div>
       <div className="project-list">
+        <div className="project-list-caption">{term ? `搜索结果 · ${visibleProjects.length} 个工作区` : showArchive ? "归档记录" : "工作区 · 按创建时间排序"}</div>
         {!visibleProjects.length && <div className="project-empty" role="status">{term ? "没有匹配的项目或会话" : showArchive ? "暂无归档项目或会话" : "暂无项目"}</div>}
         {visibleProjects.map(({project:p, chats})=>{
           const collapsed=closed.has(p.id)&&!term;
@@ -66,7 +69,7 @@ export function ProjectSidebar({footer,onInspector}: {footer:ReactNode;onInspect
             </div>}
             {!collapsed&&<div className="project-chats">{chats.map(c=><div key={c.id}>
               <div data-session-id={c.id} className={`project-chat ${selected===c.id?'selected':''}`}>
-                <button className="project-chat-open" title={c.title} onClick={()=>{store.setView('chat');void store.loadSession(c.id);}}><span>{c.title}</span>{c.busy&&<span className="session-busy" title="正在运行">忙</span>}</button>
+                <button className="project-chat-open" title={c.title} onClick={()=>{store.setView('chat');void store.loadSession(c.id);onNavigate?.();}}><span>{c.title}</span>{c.busy&&<span className="session-busy" title="正在运行">忙</span>}</button>
                 {supported && !p.archived && <button className="chat-menu-trigger" aria-label={`管理会话${c.title}`} aria-expanded={menu===c.id} onClick={()=>setMenu(menu===c.id?null:c.id)}><MoreHorizontal size={15}/></button>}
               </div>
               {!p.archived&&menu===c.id&&<div className="chat-actions">

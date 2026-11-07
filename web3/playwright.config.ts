@@ -14,6 +14,7 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:8099",
     headless: true,
+    channel: process.env.E2E_BROWSER_CHANNEL,
     viewport: { width: 1600, height: 900 },
     trace: "retain-on-failure",
   },

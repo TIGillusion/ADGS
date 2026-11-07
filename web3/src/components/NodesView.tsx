@@ -43,46 +43,47 @@ function NodeRow({ n, archived = false, meshOut = 0, meshIn = 0 }:
   const active = selected === n.id;
   return (
     <div
-      className={`group cursor-pointer rounded-xl border p-3.5 transition-all ${
+      className={`node-row group cursor-pointer rounded-xl border p-3.5 transition-all ${
         active
           ? "border-life-500/40 bg-life-500/5"
           : "border-ink-600/15 bg-abyss-850/40 hover:border-ink-600/35 hover:bg-abyss-850/70"
       } ${archived ? "opacity-70" : ""}`}
       onClick={() => store.selectInst(n.id)}
     >
-      <div className="flex items-center gap-3">
+      <div className="node-row-main flex items-center gap-3">
         <span
           className="dot shrink-0"
-          style={{ background: archived ? "var(--ink-600)" : "#2fe0bd", width: 8, height: 8 }}
+          style={{ background: archived ? "var(--ink-600)" : "var(--color-life-500)", width: 8, height: 8 }}
         />
-        <div className="num min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-100">
+        <button onClick={(event) => {event.stopPropagation();store.selectInst(n.id);}}
+          className="node-row-name num min-w-0 flex-1 truncate text-left text-[13px] font-semibold text-ink-100">
           {nodeIdLabel(n.id)}
-        </div>
+        </button>
         <Chip color={n.birth_type === "recombine" ? "gene" : n.birth_type === "whiteboard" ? "pulse" : "dim"}>
           <Dna size={10} /> 第{n.gen}代 · {BIRTH_TEXT[n.birth_type] ?? n.birth_type}
         </Chip>
-        <div className="num w-[52px] text-right text-[12px] text-ink-400">
+        <div className="node-taskcount num w-[52px] text-right text-[12px] text-ink-400">
           {n.tasks_done} 任务
         </div>
         {(meshOut > 0 || meshIn > 0) && (
           <div
-            className="num w-[86px] text-right text-[11px] text-gene-300"
+            className="node-mesh num w-[86px] text-right text-[11px] text-gene-300"
             title={`A2A 委派：作为管理者发出 ${meshOut} 次 / 作为下属被委派 ${meshIn} 次`}
           >
             委派 {meshOut}↔{meshIn}
           </div>
         )}
-        <div className={`num w-[56px] text-right text-[13px] font-semibold ${toneText(scoreTone(n.score))}`}>
+        <div className={`node-score num w-[56px] text-right text-[13px] font-semibold ${toneText(scoreTone(n.score))}`}>
           {(n.score ?? 0).toFixed(1)}
         </div>
-        <div className="w-[110px]">
+        <div className="node-success w-[110px]">
           <div className="mb-1 flex justify-between text-[10px] text-ink-600">
             <span>成功率</span>
             <span className="num">{pct(n.success_rate ?? 0)}</span>
           </div>
           <ScoreBar value={Math.round((n.success_rate ?? 0) * 100)} />
         </div>
-        <div className="flex w-[92px] shrink-0 items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="node-row-actions flex w-[92px] shrink-0 items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {archived && (
             <Button
               className="!px-2 !py-1 !text-[11px]"
@@ -114,7 +115,7 @@ function NodeRow({ n, archived = false, meshOut = 0, meshIn = 0 }:
           </button>
         </div>
       </div>
-      <div className="clamp-1 mt-1.5 pl-5 text-[11.5px] leading-[1.5] text-ink-500">
+      <div className="node-description clamp-1 mt-1.5 pl-5 text-[11.5px] leading-[1.5] text-ink-500">
         {n.describe || "（无生态位描述）"}
       </div>
       <ConfirmModal
@@ -213,9 +214,9 @@ export function NodesView() {
   }, [archived, q]);
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
+    <div className="nodes-view flex h-full min-h-0 flex-1 flex-col">
       {/* 顶栏 */}
-      <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
+      <div className="workbench-header flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
         <div className="flex items-center gap-3">
           <h2 className="font-display text-[15px] font-semibold text-ink-100">节点种群</h2>
           <Chip color="life" className="num">
@@ -232,6 +233,7 @@ export function NodesView() {
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-600" />
             <input
               className="input !w-[220px] !py-2 !pl-8"
+              aria-label="搜索节点和生态位"
               placeholder="搜索节点 / 生态位…"
               value={q}
               onChange={(e) => setQ(e.target.value)}

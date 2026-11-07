@@ -741,7 +741,7 @@ body {
 .pending-message small { color:var(--ink-500); font-size:10px; }
 .pending-more { padding:5px 10px; font-size:10px; color:var(--ink-500); }
 .project-shell .chat-scroll { background:var(--shell-bg); }
-.project-shell .chat-scroll>div { padding-top:16px; }
+.project-shell .chat-scroll>div.mx-auto { padding-top:16px; }
 :root[data-theme="light"] .project-shell .surface { background:#fff; border-color:#e5e7eb; box-shadow:0 3px 14px #00000004; }
 :root[data-theme="light"] .project-shell .surface-glass { background:#fff; }
 :root[data-theme="light"] .project-shell .font-display { letter-spacing:-.02em; }

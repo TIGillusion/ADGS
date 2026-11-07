@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { fmtAgo, fmtDuration, fmtTime, nodeIdLabel } from "@/lib/format";
 import { store } from "@/lib/store";
 import { TerminalStream } from "@/lib/terminalStream";
-import { ceoPhaseLabel, ceoGraphStatus } from "@/lib/ceo";
+import { CEO_PHASES, ceoPhaseLabel, ceoGraphStatus } from "@/lib/ceo";
 import type { CeoActivity } from "@/types";
 import type { BusEvent, ExecutionAttempt, ExecutionDetail, TerminalRecord } from "@/types";
 
@@ -28,6 +28,14 @@ const STATE_LABELS: Record<string, string> = {
   context_overflow: "上下文待恢复",
 };
 const PHASE_LABELS: Record<string, string> = { coordinating: "协调下属", decision: "节点决策", delegation: "委派执行", acceptance: "验收", execute: "执行", executing: "执行", evaluating: "验收", evaluation: "验收", rework: "补充与返工", resume: "继续会话", finished: "已结束" };
+const FREQUENT_EVENTS = new Set(["hermes.heartbeat", "terminal.activity", "terminal.output", "hermes.line"]);
+const isKeyEvent = (event: BusEvent) => !FREQUENT_EVENTS.has(event.type) && event.type !== "hermes.message";
+const TERMINAL_STAGES: Record<string, string> = { process_exited: "进程已退出", tree_reaped: "子进程已回收", output_drained: "输出已读取", terminal_closed: "终端已关闭" };
+function eventPreview(event: BusEvent): string {
+  const raw = String(event.data.phase ?? event.data.action ?? event.data.status ?? event.data.tool ?? event.data.detail ?? "");
+  const labels = event.type === "chat.ceo_activity" ? CEO_PHASES : event.type === "terminal.stage" ? TERMINAL_STAGES : {...PHASE_LABELS,...STATE_LABELS};
+  return (labels[raw] ?? raw).slice(0,140);
+}
 
 function useExecutionEvents(id: string): BusEvent[] {
   return useSyncExternalStore(
@@ -169,14 +177,15 @@ export function TerminalView({ attempt }: { attempt: ExecutionAttempt }) {
 function EventTimeline({ events }: { events: BusEvent[] }) {
   const [filter, setFilter] = useState("");
   const [showMessages, setShowMessages] = useState(false);
-  const shown = events.filter((ev) => !["hermes.heartbeat", "terminal.activity", "terminal.output", "hermes.line"].includes(ev.type)
+  const shown = events.filter((ev) => !FREQUENT_EVENTS.has(ev.type)
     && (showMessages || ev.type !== "hermes.message")
-    && (!filter || `${ev.type} ${JSON.stringify(ev.data)}`.toLowerCase().includes(filter.toLowerCase())));
+    && (!filter || `${EVENT_LABELS[ev.type] ?? ""} ${eventPreview(ev)} ${ev.type} ${JSON.stringify(ev.data)}`.toLowerCase().includes(filter.toLowerCase())));
   return <div className="execution-events"><input className="input mb-4" aria-label="搜索执行事件" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索工具、阶段、决策或错误…" />
+    <div className="execution-events-summary" role="status">{filter ? `找到 ${shown.length} 条匹配事件` : `当前显示 ${shown.length} 条${showMessages ? "事件" : "关键事件"}`} · 默认隐藏会话消息与高频状态</div>
     <label className="mb-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={showMessages} onChange={(e) => setShowMessages(e.target.checked)} />显示 Hermes 会话消息</label>
-    {!shown.length && <div className="execution-empty">等待执行事件…</div>}
+    {!shown.length && <div className="execution-empty">{filter ? "未找到匹配事件，请调整搜索内容" : "当前记录中暂无可展示的执行事件"}</div>}
     {shown.map((ev, i) => <details className={`execution-event ${ev.type === "node.eval" ? "is-evaluation" : ""}`} key={ev.id ?? `${ev.ts}-${i}`}>
-      <summary><span className="num event-time">{fmtTime(ev.ts)}</span><span>{EVENT_LABELS[ev.type] ?? ev.type}</span><span className="event-preview">{String(ev.data.phase ?? ev.data.action ?? ev.data.status ?? ev.data.tool ?? ev.data.detail ?? "").slice(0, 140)}</span></summary>
+      <summary><span className="num event-time">{fmtTime(ev.ts)}</span><span>{EVENT_LABELS[ev.type] ?? ev.type}</span><span className="event-preview">{eventPreview(ev)}</span></summary>
       <pre>{JSON.stringify(ev.data, null, 2)}</pre>
     </details>)}
   </div>;
@@ -216,6 +225,7 @@ export function ExecutionMonitor({ executionId, nodeId, profile, coordinator }: 
       if (seen.has(key)) return false; seen.add(key); return true;
     }).sort((a, b) => a.ts - b.ts);
   }, [execution?.events, liveEvents]);
+  const keyEventCount = events.filter(isKeyEvent).length;
   const attempts = execution?.attempts ?? [];
   const attempt = attempts.find((a) => a.attempt_id === pickedAttempt) ?? attempts[attempts.length - 1];
   const state = coordinator ? ceoGraphStatus(coordinator.phase) : execution?.state ?? "unknown";
@@ -232,7 +242,7 @@ export function ExecutionMonitor({ executionId, nodeId, profile, coordinator }: 
     {coordinator && <div className="execution-meta"><span>固定 CEO · Hermes · 只负责协调</span><b>{ceoPhaseLabel(coordinator)}</b></div>}
     <div className="execution-meta"><span>阶段 <b>{coordinator ? ceoPhaseLabel(coordinator) : PHASE_LABELS[execution?.phase ?? ""] ?? execution?.phase ?? "等待记录"}</b></span><span>已用时 <b className="num">{execution?.started_at ? fmtDuration(Math.max(0, (execution.ended_at || Date.now() / 1000) - execution.started_at)) : "—"}</b></span><span>最近活动 <b>{execution?.last_activity_at ? fmtAgo(execution.last_activity_at) : "—"}</b></span><span>Profile <b className="num">{execution?.profile || nodeId}</b></span></div>
     {activityLabel && attempt?.state === "running" && activity && Date.now() / 1000 - activity.ts < 90 && <div className="execution-meta" title={description}><span>当前活动 <b>{activityLabel}</b></span><span>无进展 <b className="num">{fmtDuration(Number(activity.data.idle_seconds ?? 0))}</b></span></div>}
-    <nav className="execution-tabs">{(coordinator ? [["terminal", "Hermes 决策记录"], ["events", "执行事件"], ["profile", "CEO 职责与技能"]] : [["terminal", "实时终端"], ["events", "执行事件"], ["acceptance", "验收"], ["profile", "节点档案"]]).map(([key, label]) => <button key={key} className={tab === key ? "is-active" : ""} onClick={() => setTab(key)}>{label}{key === "events" && events.length > 0 && <small>{events.length}</small>}</button>)}</nav>
+    <nav className="execution-tabs">{(coordinator ? [["terminal", "Hermes 决策记录"], ["events", "执行事件"], ["profile", "CEO 职责与技能"]] : [["terminal", "实时终端"], ["events", "执行事件"], ["acceptance", "验收"], ["profile", "节点档案"]]).map(([key, label]) => <button key={key} className={tab === key ? "is-active" : ""} onClick={() => setTab(key)}>{label}{key === "events" && keyEventCount > 0 && <small>{keyEventCount}</small>}</button>)}</nav>
     <div className="execution-body">
       {error && <div className="execution-error">{error}</div>}
       {tab === "terminal" && <>

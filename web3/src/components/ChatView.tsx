@@ -1,3 +1,4 @@
+import { ArtifactList } from "@/components/ArtifactList";
 // ============================================================
 // 对话工作台 — CEO 聊天流 + 流式工具消息 + 斜杠命令
 // ============================================================
@@ -13,7 +14,6 @@ import {
   FileOutput,
   HelpCircle,
   ListTree,
-  Paperclip,
   Pencil,
   Send,
   ShieldAlert,
@@ -165,7 +165,7 @@ function QueuePanel({ onClose }: { onClose: () => void }) {
   return (
     <>
       <div className="fixed inset-0 z-20" onClick={onClose} aria-hidden />
-      <div className="surface pop-in absolute right-0 top-full z-30 mt-2 w-[420px] p-3">
+      <div role="dialog" aria-label="任务队列" className="queue-panel surface pop-in absolute right-0 top-full z-30 mt-2 w-[420px] p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[11px] font-semibold tracking-[0.08em] text-ink-400">
             任务队列{queue.length ? `（${queue.length} 条待执行）` : ""}
@@ -420,18 +420,7 @@ function FinishMsg({ m }: { m: ChatMessage }) {
             <Code>{m.workflow}</Code>
           </Collapsible>
         )}
-        {m.artifacts && m.artifacts.length > 0 && (
-          <div className="mt-2.5">
-            <div className="section-title mb-1.5 flex items-center gap-1.5">
-              <Paperclip size={11} /> 产出物（{m.artifacts.length}）
-            </div>
-            <div className="flex min-w-0 flex-wrap gap-1.5" aria-label="产出物路径">
-              {m.artifacts.map((a, i) => (
-                <span key={i} title={a} className="chip artifact-path num border-life-500/40 bg-life-500/10 text-life-300">{a}</span>
-              ))}
-            </div>
-          </div>
-        )}
+        {m.artifacts && m.artifacts.length > 0 && <ArtifactList paths={m.artifacts}/>}
       </div>
     </div>
   );
@@ -615,6 +604,33 @@ export function ChatView() {
 
   useEffect(() => { setInput(store.draftFor(viewSession)); setShowQueue(false); setShowCmds(false); }, [viewSession]);
 
+  useEffect(() => {
+    const box = inputRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    box.style.height = `${Math.min(box.scrollHeight, 200)}px`;
+  }, [input, viewSession]);
+
+  useEffect(() => {
+    const box = inputRef.current;
+    if (!box) return;
+    let width = box.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      box.style.height = "auto";
+      box.style.height = `${Math.min(box.scrollHeight, 200)}px`;
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setShowQueue(false); setShowCmds(false); } };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, []);
+
   const send = async () => {
     const t = input.trim();
     if (!t || sending || archived || scopedRecovery) return;
@@ -656,7 +672,7 @@ export function ChatView() {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* 顶栏 */}
-      <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
+      <div className="chat-header flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <h2 className="font-display text-[15px] font-semibold text-ink-100 truncate">{conversation?.title || "对话工作台"}</h2>
           {archived && <Chip color="dim">已归档</Chip>}
@@ -715,7 +731,7 @@ export function ChatView() {
             {busy && (
               <div className="msg-in flex items-center gap-2.5 pl-9 text-[12px] text-ink-500">
                 <Spinner size={12} />
-                CEO 思考中{queueLen > 0 ? `（另有 ${queueLen} 个任务排队）` : ""}…
+                {ceoPhaseLabel(ceo, true)}{queueLen > 0 ? ` · ${queueLen} 条消息排队` : ""}…
               </div>
             )}
           </div>
@@ -734,7 +750,7 @@ export function ChatView() {
 
       {/* 输入区 */}
       <div className="chat-input-area relative shrink-0 px-5 py-4">
-        {showCmds && !archived && <CommandPanel query={input} onPick={(cmd) => { setInput(cmd + " "); setShowCmds(false); inputRef.current?.focus(); }} />}
+        {showCmds && !archived && <CommandPanel query={input} onPick={(cmd) => { onInput(cmd + " "); setShowCmds(false); inputRef.current?.focus(); }} />}
         {!archived && queue.length > 0 && <div className="pending-messages mx-auto w-full max-w-[720px]" aria-label="待处理消息">
           {queue.slice(0,3).map(item=><div className="pending-message" key={item.id}>
             <Clock size={14}/><span title={item.text}>{item.text}</span>
@@ -748,11 +764,12 @@ export function ChatView() {
             <textarea
               ref={inputRef}
               rows={1}
+              aria-label="消息内容"
               value={archived ? "" : input}
               disabled={archived}
               onChange={(e) => onInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                   e.preventDefault();
                   void send();
                 }
@@ -772,7 +789,7 @@ export function ChatView() {
               className="max-h-[160px] w-full resize-none bg-transparent text-[13.5px] leading-6 text-ink-100 outline-none placeholder:text-ink-600"
             />
           </div>
-          <div className="composer-bottom"><span>{scopedRecovery ? "事故恢复中 · 已核准的节点任务运行中" : recoveryChat ? "事故恢复中 · 可以对话，节点任务暂停" : "CEO 规划与委派 · Worker 执行"}</span><Button
+          <div className="composer-bottom"><span>{scopedRecovery ? "事故恢复中 · 已核准的节点任务运行中" : recoveryChat ? "事故恢复中 · 可以对话，节点任务暂停" : busy ? "默认排队 · 点「引导」后在本批任务汇报时交给 CEO" : "CEO 规划与委派 · Worker 执行"}</span><Button
             variant="primary"
             className="composer-send"
             onClick={() => void send()}
@@ -783,7 +800,7 @@ export function ChatView() {
           </Button></div>
         </div>
         <div className="mx-auto mt-2 flex w-full max-w-[720px] items-center justify-between text-[10.5px] text-ink-600">
-          <span>斜杠命令作用于 CEO（/help 查看全部）</span>
+          <span>Enter 发送 · Shift + Enter 换行 · / 查看命令</span>
           <span className="num">{messages.length} 条消息</span>
         </div>
       </div>
