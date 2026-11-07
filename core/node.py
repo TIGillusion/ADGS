@@ -735,6 +735,18 @@ class NODE:
             # than the CEO's rendered sections. Their named output still belongs
             # to the recorded execution workspace.
             block = task_md
+        # Only enforce the machine-readable format when explicitly requested.
+        # Older contracts allow annotated manifests; later amendments win.
+        plain_manifest = False
+        for specification in task_md.splitlines():
+            if not re.search(r"DELIVERABLES\.txt", specification, re.I):
+                continue
+            if re.search(r"纯(?:文件)?路径|plain.{0,20}(?:file|path)", specification, re.I):
+                plain_manifest = True
+            for allowance in re.finditer(r"(?:允许|可用|可包含|allow).{0,60}(?:说明|注释|description|comment)", specification, re.I):
+                prefix = specification[max(0, allowance.start()-10):allowance.start()]
+                if not re.search(r"(?:不|不得|禁止|不可|not|never)\s*$", prefix, re.I):
+                    plain_manifest = False
         lines, checked = [], 0
         for raw in block.splitlines():
             item = raw.strip().lstrip("-*• ").strip()
@@ -753,6 +765,28 @@ class NODE:
             except OSError:
                 exists = False
             lines.append(f"- {'存在' if exists else '缺失'}: {token}")
+            if exists and plain_manifest and candidate.name.upper() == "DELIVERABLES.TXT":
+                try:
+                    entries = [value.strip() for value in candidate.read_text(encoding="utf-8-sig").splitlines() if value.strip()]
+                    if not entries:
+                        lines.append(f"- 不合格: {token} 是空文件路径清单")
+                    seen = set()
+                    for index, value in enumerate(entries, 1):
+                        path = Path(value)
+                        if not path.is_absolute():
+                            path = Path(workspace or ".") / path
+                        try:
+                            valid = path.is_file()
+                            key = str(path.resolve())
+                        except (OSError, ValueError, RuntimeError):
+                            valid, key = False, value
+                        if not valid:
+                            lines.append(f"- 不合格: {token} 第 {index} 个非空行不是现有文件路径: {value[:180]}")
+                        elif key in seen:
+                            lines.append(f"- 不合格: {token} 第 {index} 个非空行重复文件路径: {value[:180]}")
+                        seen.add(key)
+                except (OSError, UnicodeError, ValueError) as exc:
+                    lines.append(f"- 不合格: {token} 无法按 UTF-8 文件路径清单读取: {type(exc).__name__}")
         if not checked:
             return "交付物清单无可核验的文件路径，跳过机械核验。"
         return f"机械核验 {checked} 项交付物路径：\n" + "\n".join(lines)
@@ -786,7 +820,7 @@ class NODE:
         if pending:
             return {"unjudged_result": pending}
         mech = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
-        missing = [line[2:] for line in mech.splitlines() if line.startswith("- 缺失: ")]
+        missing = [line[2:] for line in mech.splitlines() if line.startswith(("- 缺失: ", "- 不合格: "))]
         review_input = (str(output or "")[-9000:] + "\n\n【系统机械核验】\n本执行工作区：" +
                         str(getattr(self, "_workspace", "")) +
                         "\n相对交付路径以此目录为基准；文件写到其他目录不能算本项目交付完成。\n" + mech)
@@ -999,7 +1033,7 @@ class NODE:
             if isinstance(self.agent, AGENT):
                 eval_args["timeout"] = min(config.worker_timeout, max(0, self._deadline - time.monotonic()))
             mechanical = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
-            missing = [line[2:] for line in mechanical.splitlines() if line.startswith("- 缺失: ")]
+            missing = [line[2:] for line in mechanical.splitlines() if line.startswith(("- 缺失: ", "- 不合格: "))]
             evaluation = self.agent.evaluate(task_md, evidence + "\n\n【当前系统机械核验】\n" + mechanical, **eval_args)
             if evaluation.get("unjudged"):
                 result = self._unjudged(task_md, log, evaluation.get("outcome", "evaluation_unavailable"),

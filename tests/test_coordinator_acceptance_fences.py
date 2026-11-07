@@ -71,3 +71,34 @@ def test_pending_review_emits_unknown_acceptance_without_infrastructure_failure(
     assert 'original-delegation' in acceptance['detail']
     assert result['evaluation']=={k:v for k,v in acceptance.items() if k not in {'node','profile'}}
     assert result['session_id']=='same-context' and not scores
+
+
+def test_annotated_manifest_and_directory_cannot_pass_plain_file_list_contract(tmp_path,monkeypatch):
+    n,_,scores=node_fixture(tmp_path,monkeypatch)
+    (tmp_path/'reports').mkdir();(tmp_path/'reports/result.md').write_text('real report')
+    (tmp_path/'DELIVERABLES.txt').write_text('# 交付物\nreports/result.md — 报告（123 字节）\nreports/\n',encoding='utf-8')
+    contract='## 交付物\n- DELIVERABLES.txt：逐行路径，行内可用路径 — 一句话说明\n## 上层补充\nDELIVERABLES.txt 必须是纯文件路径清单\n'
+    result=n._complete_execution(contract,{'exit_code':0},'ceo',True)
+    assert not result['success'] and result['evaluation']['score']==50
+    assert len(result['evaluation']['failed_items'])==3
+    merged=n._independent_acceptance(contract,'all complete','passed','all done')
+    assert not merged['passed'] and len(merged['evaluation']['failed_items'])==3
+
+
+def test_plain_manifest_supports_unicode_spaces_and_rejects_duplicate_aliases(tmp_path):
+    (tmp_path/'reports').mkdir();(tmp_path/'reports/中文 结果.md').write_text('ok')
+    manifest=tmp_path/'DELIVERABLES.txt'
+    contract='## 交付物\n- DELIVERABLES.txt：纯文件路径清单，每行一个现有文件路径，不允许注释和说明\n'
+    manifest.write_text('reports/中文 结果.md\n',encoding='utf-8-sig')
+    assert '不合格' not in module.NODE._mechanical_evidence(contract,str(tmp_path))
+    manifest.write_text('reports/中文 结果.md\n./reports/中文 结果.md\n',encoding='utf-8')
+    assert '重复文件路径' in module.NODE._mechanical_evidence(contract,str(tmp_path))
+    manifest.write_text('',encoding='utf-8')
+    assert '空文件路径清单' in module.NODE._mechanical_evidence(contract,str(tmp_path))
+
+
+def test_manifest_without_plain_line_contract_keeps_existing_compatibility(tmp_path):
+    (tmp_path/'DELIVERABLES.txt').write_text('# Human-readable summary\n',encoding='utf-8')
+    assert '不合格' not in module.NODE._mechanical_evidence('## 交付物\n- DELIVERABLES.txt 逐行列出路径，行内可用路径 — 一句话说明\n',str(tmp_path))
+    revised='## 交付物\n- DELIVERABLES.txt 纯文件路径清单\n## 后续修改\nDELIVERABLES.txt 允许包含注释和说明\n'
+    assert '不合格' not in module.NODE._mechanical_evidence(revised,str(tmp_path))
