@@ -185,7 +185,11 @@ def main():
 ''', encoding="utf-8")
     (tmp_path / "core").mkdir()
     shutil.copy2(runtime.ROOT / "core" / "hermes_worker.py", tmp_path / "core" / "hermes_worker.py")
-    shutil.copy2(runtime.ROOT / "core" / "provider_compat.py", tmp_path / "core" / "provider_compat.py")
+    # These subprocesses simulate Hermes, not its provider SDK. Importing the
+    # real OpenAI SDK can consume this fixture's entire short wall deadline on
+    # Windows. Provider compatibility has its own tests and makes no requests
+    # in this fake installation.
+    (tmp_path / "core" / "provider_compat.py").write_text("def install_openai_compat(): pass\n")
     shutil.copy2(runtime.ROOT / "core" / "resume_projection.py", tmp_path / "core" / "resume_projection.py")
     monkeypatch.setattr(runtime, "ROOT", tmp_path)
     monkeypatch.setattr(runtime, "hermes_installation", lambda: (Path(sys.executable), source))
