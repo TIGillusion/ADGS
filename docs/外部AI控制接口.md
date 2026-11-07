@@ -214,6 +214,10 @@ CLI 的 request 命令面向 JSON 接口，文件/SSE 使用支持流式响应�
 
 网络超时后先查询回执/状态并用同一个幂等键重试。暂时 blocked、unjudged 或 paused 表示工作未完成，要读取实际原因和原执行证据；不得向最终用户报告“任务成功”。
 
+CEO 的 finish.status=answered 表示基于已有信息的答复已结束，没有新的业务执行；不能把它当作新任务验收通过。此类会话 phase 也会是 completed，控制端应同时读取最终事件状态和当前 run 的执行记录。
+
+Worker 连续上下文返工可调用 MCP continue_delegation(parent_execution_id, delegation_id, instruction)，使用原 delegation_id 等待和重新判定，保留 execution/profile/Hermes session。它与 CEO 的 continue_task 对应；独立新上下文仍用 delegate_to_node。内部调试端点为 POST /internal/mesh/delegations/{delegation_id}/continue，沿用 Mesh 令牌，不是 /api/v1 的控制令牌。外部控制 AI 通常通过 messages 给 CEO 具体返工指令，由 CEO/负责人决定续接。
+
 ## 10. 本次实测记录（2026-11-05）
 
 本次通过实际运行中的 `127.0.0.1:8021` 控制 API 接续了用户指定的上一项任务：
