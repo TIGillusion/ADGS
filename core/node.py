@@ -743,7 +743,7 @@ class NODE:
         if declared:
             block += "\n" + "\n".join(dict.fromkeys(declared))
         if not block and len(task_md.splitlines()) <= 8 and re.search(
-                r"\b(?:write|create|save|generate)\b|写入|生成|保存", task_md, re.I):
+                r"\b(?:write|create|save|generate)\b|写入|只写|生成|保存|创建", task_md, re.I):
             # Mesh contracts can be short natural-language instructions rather
             # than the CEO's rendered sections. Their named output still belongs
             # to the recorded execution workspace.
@@ -789,7 +789,7 @@ class NODE:
             m = re.search(r'(?:[A-Za-z]:[\\/][^\s，。；;"\']+|' + quoted + '|' + relative + r'\.[A-Za-z0-9]{1,6})', item)
             if not m:
                 continue
-            token = m.group(0).strip('`\'.,;，。、"')
+            token = m.group(0).strip('`\'"').rstrip('.,;，。、')
             candidate = Path(token)
             if not candidate.is_absolute():
                 candidate = Path(workspace or ".") / candidate

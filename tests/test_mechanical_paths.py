@@ -37,8 +37,9 @@ def test_inline_failure_description_does_not_require_basename_in_root(tmp_path,e
           '运行 python report.py --output .adgs_artifacts/eval-B/report-jsfix.html。'
           '写入仅限 report.py 和 .adgs_artifacts/eval-B/。')
     result=evidence(task,str(tmp_path))
-    assert '缺失: report.html' not in result
+    assert '缺失' not in result
     assert '存在: report.py' in result
+    assert '存在: .adgs_artifacts/eval-B/report-jsfix.html' in result
 
 
 def test_inline_readonly_background_does_not_create_output_obligation(tmp_path,evidence):
@@ -47,3 +48,13 @@ def test_inline_readonly_background_does_not_create_output_obligation(tmp_path,e
     result=evidence(task,str(tmp_path))
     assert 'missing/input.csv' not in result
     assert '存在: result.json' in result
+
+
+@pytest.mark.parametrize('name',['.output.json','./nested/output.json'])
+def test_inline_output_keeps_leading_dot_and_checks_actual_file(tmp_path,evidence,name):
+    target=tmp_path/name;target.parent.mkdir(parents=True,exist_ok=True)
+    task=f'请写入 {name} 并汇报。'
+    assert f'缺失: {name}' in evidence(task,str(tmp_path))
+    target.write_text('{}',encoding='utf-8')
+    result=evidence(task,str(tmp_path))
+    assert f'存在: {name}' in result and '缺失' not in result
