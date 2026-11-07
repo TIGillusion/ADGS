@@ -19,7 +19,7 @@ describe("产出物阅读与复制", () => {
     render(<ArtifactList paths={[paths[0]]}/>);
     fireEvent.click(screen.getByRole("button", {name:"复制路径：成果0.md"}));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(paths[0]));
-    expect(screen.getByRole("status")).toHaveTextContent("已复制完整路径");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已复制完整路径"));
   });
   it("剪贴板不可用时保留完整路径并提示手动复制", async () => {
     Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:vi.fn().mockRejectedValue(new Error("denied"))}});

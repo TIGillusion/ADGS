@@ -298,7 +298,8 @@ class NODE:
             execution_store.put(self._execution_id, node_id=self.node_id, profile=self.profile,
                                 task_id=self._work_task_id, run_id=run_id, task_md=task_md,
                                 workspace=self._workspace, session_name=self._session_name, state="running", phase="decision",
-                                deadline_at=None, decision_pending=True, depth=depth)
+                                deadline_at=None, decision_pending=True, depth=depth,
+                                error="", ended_at=None)
         except BaseException:
             # work()/continue_execution() enter their cleanup only AFTER this
             # preparation. A failed checkpoint must not keep a phantom owner.
@@ -1170,8 +1171,11 @@ class NODE:
                 if not session_id:
                     execution_store.put(self._execution_id, phase="preflight", decision_pending=True)
                 raise
-            execution_store.put(self._execution_id, phase=phase, attempt_id=self._attempt_id)
-            bus.emit("node.status", node=self.node_id, profile=self.profile, status="running",
+            coordinating = bool((execution_store.get(self._execution_id) or {}).get("coordinator"))
+            execution_store.put(self._execution_id, phase="coordinating" if coordinating else phase,
+                                attempt_id=self._attempt_id)
+            bus.emit("node.status", node=self.node_id, profile=self.profile,
+                     status="delegating" if coordinating else "running",
                      task=self._work_task_id, attempt_id=self._attempt_id)
             bus.emit("hermes.start", node=self.node_id, profile=self.profile, phase=phase,
                      attempt_id=self._attempt_id)
