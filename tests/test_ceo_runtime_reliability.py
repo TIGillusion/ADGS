@@ -55,7 +55,7 @@ class ReliabilityTests(unittest.TestCase):
                 raise AssertionError("CEO must not create temporary profiles")
 
         class FakeChat:
-            def __init__(self, **kwargs):
+            def __init__(self, *args, **kwargs):
                 pass
 
         config_module = types.ModuleType("config.config")
@@ -70,9 +70,12 @@ class ReliabilityTests(unittest.TestCase):
         bus_module.bus = types.SimpleNamespace(emit=lambda kind, **data: self.events.append((kind, data)))
         chat_module = types.ModuleType("utils.chat")
         chat_module.CHAT, chat_module.validate_arguments = FakeChat, validate_arguments
+        hermes_ceo_module = types.ModuleType("core.hermes_ceo")
+        hermes_ceo_module.HermesCEOChat = FakeChat
         self.modules = patch.dict(sys.modules, {"config.config": config_module,
             "core.node": node_module, "core.router": router_module, "core.registry": registry_module,
-            "web.event_bus": bus_module, "utils.chat": chat_module})
+            "web.event_bus": bus_module, "utils.chat": chat_module,
+            "core.hermes_ceo": hermes_ceo_module})
         self.modules.start()
         self.addCleanup(self.modules.stop)
         self.compress = load_file("core.compress", "core/compress.py")
