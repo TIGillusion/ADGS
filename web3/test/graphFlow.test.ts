@@ -54,6 +54,14 @@ describe('统一输入轮次与派发批次',()=>{
   expect(instances(g).map(n=>n.extra.execution_id)).toEqual(['e1','e2']);
   for(const n of instances(g)) expect(rounds(g,n.key)).toHaveLength(1);
  });
+ it('负责人待复核事件清除历史通过标记并显示当前原因',()=>{
+  const g=fold([user(),prepare('t1','e1','s1'),dispatch('t1','e1','a'),
+   event('node.eval',{node:'a',execution_id:'e1',passed:true,detail:'旧成果通过'}),
+   event('node.status',{node:'a',execution_id:'e1',status:'unjudged',outcome:'unjudged'}),
+   event('node.eval',{node:'a',execution_id:'e1',unjudged:true,infra_failure:false,detail:'原下属尚未由负责人复核'})]);
+  const n=instances(g)[0];expect(n.status).toBe('unjudged');expect(n.extra.passed).toBeUndefined();
+  expect(n.extra.eval_detail).toBe('原下属尚未由负责人复核');
+ });
  it('worker递归委派使用自己的轮次和批次，没有虚拟锚点和可点击A2A边',()=>{
   const initial=[user(),prepare('t1','e1','s1'),dispatch('t1','e1','a')];
   const g=fold([...initial,event('a2a.delegate',{delegation_id:'d1',node:'b',parent:'a',parent_execution_id:'e1',child_execution_id:'e2',batch_id:'parallel1',summary:'完整子任务书1',status:'running'}),event('a2a.delegate',{delegation_id:'d2',node:'c',parent:'a',parent_execution_id:'e1',child_execution_id:'e3',batch_id:'parallel1',summary:'完整子任务书2',status:'running'})]);

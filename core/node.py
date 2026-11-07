@@ -250,7 +250,7 @@ class NODE:
         if not task_id:
             return
         data = {"node": self.node_id, "profile": self.profile,
-                "status": "done" if passed else ("interrupted" if infra or outcome in ("protocol_error", "interrupted", "evaluation_unavailable", "blocked", "context_overflow") else "failed"),
+                "status": "done" if passed else ("unjudged" if outcome == "unjudged" else "interrupted" if infra or outcome in ("protocol_error", "interrupted", "evaluation_unavailable", "blocked", "context_overflow") else "failed"),
                 "outcome": outcome or ("passed" if passed else ("unjudged" if infra else "failed")),
                 "passed": bool(passed), "reworks": reworks}
         if infra:
@@ -467,8 +467,9 @@ class NODE:
                 "【本次上层补充】\n" + instruction)
 
     def _unjudged(self, task_md, log, outcome, reason):
-        self._emit_terminal_status(self._work_task_id, False, infra=True, outcome=outcome, detail=reason)
-        return {"success": False, "unjudged": True, "infra_failure": outcome != "protocol_error",
+        infrastructure = outcome not in {"protocol_error", "unjudged"}
+        self._emit_terminal_status(self._work_task_id, False, infra=infrastructure, outcome=outcome, detail=reason)
+        return {"success": False, "unjudged": True, "infra_failure": infrastructure,
                 "outcome": outcome, "error": reason, "task_md": task_md,
                 "work_log": log.get("output", ""), "session_id": log.get("session_id"),
                 "termination_reason": log.get("termination_reason")}
@@ -769,7 +770,8 @@ class NODE:
         result = self._unjudged(task_md, log, "unjudged",
             "协调者进程已返回，尚不能验收完成。" + reason +
             "请续接原父会话，wait_delegation 获取汇报后调用 report_delegation_verdict，再完成剩余任务；不要取消或重派下属。")
-        result["infra_failure"] = False
+        result["evaluation"] = {"unjudged": True, "infra_failure": False, "outcome": "unjudged", "detail": result["error"]}
+        bus.emit("node.eval", node=self.node_id, profile=self.profile, **result["evaluation"])
         return result
 
     def _independent_acceptance(self, task_md: str, output: str,

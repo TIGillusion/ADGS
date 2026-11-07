@@ -273,7 +273,8 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
       }
       if (event.type === "node.eval") {
         n.extra.eval_detail = str(d.detail);
-        if (typeof d.passed === "boolean") n.extra.passed = d.passed;
+        if (d.unjudged || d.infra_failure) delete n.extra.passed;
+        else if (typeof d.passed === "boolean") n.extra.passed = d.passed;
         n.status = d.unjudged || d.infra_failure ? "unjudged" : d.passed === true ? "done" : d.passed === false ? "failed" : n.status;
       }
       if (event.type === "node.eval" || event.type.endsWith("status")) {

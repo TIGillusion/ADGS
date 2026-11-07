@@ -7,6 +7,7 @@ import core.node as module
 
 def node_fixture(tmp_path,monkeypatch):
     store=ExecutionStore(tmp_path/'executions.sqlite');monkeypatch.setattr(module,'execution_store',store)
+    monkeypatch.setattr(module.bus,'emit',lambda *a,**kw:None)
     n=module.NODE.__new__(module.NODE)
     n.node_id=n.profile='manager';n._execution_id='parent';n._work_task_id='task';n._workspace=str(tmp_path);n._run_id='run'
     n._score_base=50;n._deadline=float('inf');n.reg=SimpleNamespace(get=lambda _:SimpleNamespace(score=50))
@@ -55,3 +56,18 @@ def test_finished_child_still_requires_current_parent_review(tmp_path,monkeypatc
     assert 'continued-child' in result['error'] and 'report_delegation_verdict' in result['error']
     store.put('parent',pending_delegation_reviews=[])
     assert n._pending_children_result('updated contract',{}) is None
+
+
+def test_pending_review_emits_unknown_acceptance_without_infrastructure_failure(tmp_path,monkeypatch):
+    n,store,scores=node_fixture(tmp_path,monkeypatch)
+    store.put('parent',pending_delegation_reviews=['original-delegation'])
+    n._emit_terminal_status=module.NODE._emit_terminal_status.__get__(n)
+    events=[];monkeypatch.setattr(module.bus,'emit',lambda kind,**data:events.append((kind,data)))
+    result=n._pending_children_result('contract',{'session_id':'same-context'})
+    status=next(d for kind,d in events if kind=='node.status')
+    acceptance=next(d for kind,d in events if kind=='node.eval')
+    assert status['status']=='unjudged' and not status.get('infra')
+    assert acceptance['unjudged'] and not acceptance['infra_failure'] and 'passed' not in acceptance
+    assert 'original-delegation' in acceptance['detail']
+    assert result['evaluation']=={k:v for k,v in acceptance.items() if k not in {'node','profile'}}
+    assert result['session_id']=='same-context' and not scores

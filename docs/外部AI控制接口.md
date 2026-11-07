@@ -218,6 +218,8 @@ CEO 的 finish.status=answered 表示基于已有信息的答复已结束，没�
 
 Worker 连续上下文返工可调用 MCP continue_delegation(parent_execution_id, delegation_id, instruction)，使用原 delegation_id 等待和重新判定，保留 execution/profile/Hermes session。它与 CEO 的 continue_task 对应；独立新上下文仍用 delegate_to_node。内部调试端点为 POST /internal/mesh/delegations/{delegation_id}/continue，沿用 Mesh 令牌，不是 /api/v1 的控制令牌。外部控制 AI 通常通过 messages 给 CEO 具体返工指令，由 CEO/负责人决定续接。
 
+执行详情中的 `waiting_for_children` 表示当前正在等待并归还执行名额；`pending_delegation_reviews` 是该负责人尚未复核的 Mesh 委派 ID 列表。下属 `passed` 仍不代表上级工作完成：负责人需要读取汇报、调用 `report_delegation_verdict` 并完成任务书剩余步骤。未结束或未复核的下属会使父执行保持 `unjudged`，不会作为模型服务故障，也不应重派成新实例。待复核义务在重启后保留，续接原负责人即可继续。`wait_delegation` 显示的本轮派发经过时间包括排队，不是执行超时预算。
+
 ## 10. 本次实测记录（2026-11-05）
 
 本次通过实际运行中的 `127.0.0.1:8021` 控制 API 接续了用户指定的上一项任务：
