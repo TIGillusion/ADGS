@@ -150,7 +150,15 @@ export interface ProjectItem {
   archived?: boolean | number;
 }
 
+export interface CeoActivity {
+  engine: string; role: string; phase: string; model?: string;
+  execution_id?: string | null; attempt_id?: string; hermes_session_id?: string | null;
+  detail?: string;
+  updated_at?: number;
+}
+
 export interface StateSnapshot {
+  ceo?: CeoActivity;
   event_id?: number;
   ceo_execution_id?: string | null;
   worker_hold?: boolean;
@@ -317,6 +325,7 @@ export interface GraphNode {
     task_title?: string;
     mode?: "direct" | "clone";
     ceo_first?: string;
+    ceo_activity?: CeoActivity;
     /** 最近一次转入 running 的服务端时间戳（ms，事件 ts）——执行时长计时起点 */
     runTs?: number;
   };

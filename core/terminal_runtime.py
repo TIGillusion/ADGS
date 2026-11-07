@@ -569,6 +569,8 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             if model:
                 cmd += ["-m", model]
         cmd += ["chat", "--oneshot", "--query-file", str(task_file)]
+        if control_tools and profile == "ceo":
+            cmd += ["--skills", "adgs-ceo"]
         if session_id:
             cmd += ["--resume", session_id]
         env = os.environ.copy()

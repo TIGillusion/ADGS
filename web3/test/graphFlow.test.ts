@@ -13,6 +13,16 @@ const prepare=(task:string,ex:string,stage:string)=>event('graph.task',{id:task,
 const dispatch=(task:string,ex:string,node:string)=>event('graph.dispatch',{task_id:task,execution_id:ex,node,parent:'ceo',task_md:`任务书 ${task}`});
 
 describe('统一输入轮次与派发批次',()=>{
+ it('Hermes CEO 阶段绑定根节点，不能变成Worker或额外用户轮次',()=>{
+  const activity=(phase:string)=>event('chat.ceo_activity',{node:'ceo',engine:'hermes',role:'coordinator',phase,execution_id:'ceo-exec',attempt_id:'decision-1'});
+  const initial=fold([activity('deciding')]);expect(rounds(initial,'ceo')).toHaveLength(0);
+  const g=fold([user(),activity('deciding'),prepare('t1','e1','s1'),dispatch('t1','e1','a'),activity('waiting_children')]);
+  expect(rounds(g,'ceo')).toHaveLength(1);expect(instances(g)).toHaveLength(1);
+  const ceo=displayGraph(g).nodes.find(n=>n.key==='ceo')!;
+  expect(ceo.extra.execution_id).toBe('ceo-exec');expect(ceo.status).toBe('delegating');
+  const saved=displayGraph(g).nodes.map(n=>({...n,parent:n.parent??'',extra:n.key==='ceo'?{...n.extra,flow_snapshot:g.flow}:n.extra})) as SavedGraphNode[];
+  expect(displayGraph(graphFromSaved(saved)).nodes.find(n=>n.key==='ceo')?.extra.ceo_activity?.phase).toBe('waiting_children');
+ });
  it('两个并发任务共用序号1；完成后下一批是序号2',()=>{
   const g=fold([user(),prepare('t1','e1','s1'),prepare('t2','e2','s1'),dispatch('t1','e1','a'),dispatch('t2','e2','b'),prepare('t3','e3','s2'),dispatch('t3','e3','c')]);
   const batches=tasks(g,'round-1');expect(batches.map(b=>b.label)).toEqual(['1','2']);

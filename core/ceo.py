@@ -73,6 +73,7 @@ class CEO:
         "_run_id": None, "_awaiting_input": False,
         "_hermes_session_id": None, "_hermes_execution_id": None,
         "_hermes_input_count": 0, "_hermes_input_hash": "",
+        "_ceo_activity": None,
     }
 
     def __getattr__(self, name):
@@ -102,6 +103,17 @@ class CEO:
         if "_state_lock" not in self.__dict__:
             self._state_lock = threading.RLock()
         return self._state_lock
+
+    def _set_activity(self, phase, owner=None, **fields):
+        owner = owner or self._owner
+        with self._lock():
+            state = self.__dict__.setdefault("_states", {}).setdefault(owner, {})
+            payload = {"engine": "hermes", "role": "coordinator", "phase": phase,
+                       "updated_at": time.time(),
+                       "model": config.ceo_model, "execution_id": state.get("_hermes_execution_id"),
+                       "hermes_session_id": state.get("_hermes_session_id"), **fields}
+            state["_ceo_activity"] = payload
+        bus.emit("chat.ceo_activity", session=owner, node="ceo", run_id=state.get("_run_id"), **payload)
 
     def _model_messages(self, system_prompt=CEO_SYSTEM_PROMPT):
         with self._lock():
@@ -323,6 +335,7 @@ class CEO:
             # complete it or authorize consumption of the next queued request.
             state["_task_done"] = False
             state["_awaiting_input"] = False
+        self._set_activity("interrupted", owner=name)
         bus.emit("chat.ceo_end", status=status, session=name, run_id=state.get("_run_id"),
                  reason=reason, error=reason, text=text, **details)
         return text
@@ -682,6 +695,7 @@ class CEO:
             })
 
             if name in ("read_file", "list_files"):
+                self._set_activity("inspecting")
                 self._explore_count += 1
                 content = (self._read_file(args) if name == "read_file"
                            else self._list_files(args))
@@ -701,6 +715,7 @@ class CEO:
                 q = args.get("question", "请详细说明你的需求")
                 self._task_done = False  # 提问挂起：用户回答时接着上下文，不重置
                 self._awaiting_input = True
+                self._set_activity("awaiting_user")
                 self.history.append({
                     "role": "tool", "tool_call_id": tc["id"],
                     "content": f"（已向用户提问：{q}）"})
@@ -708,6 +723,7 @@ class CEO:
                 return f"CEO 提问：{q}"
 
             if name in ("split_tasks", "single_task", "continue_task"):
+                self._set_activity("waiting_children", tool=name)
                 try:
                     result = (self._continue_task(args) if name == "continue_task"
                               else self._dispatch_step(name, args))
@@ -730,6 +746,7 @@ class CEO:
                     "content": content})
                 bus.emit("chat.ceo_tool", name=name, args=args,
                          result=content)
+                self._set_activity("reviewing")
                 if self._stop_if_requested():
                     return "本轮已暂停，原任务保留。"
                 if self._apply_pending_guidance():
@@ -737,6 +754,7 @@ class CEO:
                 continue  # 让 CEO 看结果再决定下一步
 
             if name == "report":
+                self._set_activity("reporting")
                 # 进度汇报：打印到终端 + 回填结果，循环继续（不结束）
                 print(f"\n[CEO 进度汇报] {args.get('summary', '')}\n"
                       f"  下一步：{args.get('next_plan', '')}\n", flush=True)
@@ -763,6 +781,7 @@ class CEO:
                 if finish_status != "blocked":
                     self._settle_direct_reports(finish_status)
                 self._task_done = finish_status != "blocked"
+                self._set_activity(finish_status)
                 self.history.append({
                     "role": "tool", "tool_call_id": tc["id"],
                     "content": ("（受阻原因已向用户汇报，原任务待恢复）" if finish_status == "blocked"
@@ -1161,6 +1180,7 @@ class CEO:
         if callable(callback) and callback():
             self._task_done=False
             self._awaiting_input=False
+            self._set_activity("paused")
             bus.emit('chat.ceo_end',status='paused',reason='控制端请求暂停；原任务、会话和排队消息已保留')
             return True
         return False

@@ -51,6 +51,14 @@ beforeEach(() => {
 });
 
 describe("NodeDrawer 渲染回归", () => {
+  it("尚未建立Hermes会话的CEO显示固定职责，不请求Worker档案", async () => {
+    store.selectInst("ceo");
+    const { unmount } = render(<NodeDrawer />);
+    expect(screen.getByTestId("ceo-profile")).toHaveTextContent("固定 CEO · Hermes");
+    expect(screen.getByTestId("ceo-profile")).toHaveTextContent("adgs-ceo");
+    expect(api.nodeDetail).not.toHaveBeenCalled();
+    unmount();
+  });
   it("裸节点 id 选中后抽屉挂载并加载档案（曾整树崩溃）", async () => {
     store.selectInst("ags_1");
     const { unmount } = render(<NodeDrawer />);

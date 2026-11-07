@@ -235,6 +235,13 @@ def api_state():
                 encoding="utf-8")).get("session_state") or {}
         except (OSError, ValueError):
             pass
+    ceo_busy = _session_busy(selected) if selected else _busy["state"]
+    ceo_activity = {**(ceo_state.get("_ceo_activity") or {}), "engine": "hermes", "role": "coordinator",
+                    "model": config.ceo_model, "execution_id": ceo_state.get("_hermes_execution_id"),
+                    "hermes_session_id": ceo_state.get("_hermes_session_id")}
+    if not ceo_busy and ceo_activity.get("phase") in {"deciding", "inspecting", "waiting_children", "reviewing", "reporting"}:
+        ceo_activity["phase"] = "awaiting_user" if ceo_state.get("_awaiting_input") else "interrupted"
+    ceo_activity.setdefault("phase", "deciding" if ceo_busy else "idle")
     return jsonify({
         "ok": True,
         "workspace": meta["workspace"] if meta else config.workspace,
@@ -252,6 +259,7 @@ def api_state():
         "events": [_display_event(e) for e in bus.history(1500) if not selected or e.get("session") == selected],
         "event_id": bus.last_id,
         "ceo_execution_id": ceo_state.get("_hermes_execution_id"),
+        "ceo": ceo_activity,
         "busy": _session_busy(selected) if selected else _busy["state"],
         "worker_hold": worker_launch_on_hold(),
         "mesh": _mesh_status,
@@ -1315,7 +1323,7 @@ def _session_save_listener():
             continue
         # CEO 回复类事件 + 节点完成事件（节点完成也属任务进展）
         if t in ("chat.ceo_tool", "chat.ceo_ask", "chat.ceo_report",
-                 "chat.ceo_finish", "chat.ceo_end") \
+                 "chat.ceo_finish", "chat.ceo_end", "chat.ceo_activity") \
                 or (t == "node.status"
                     and ev["data"].get("status") in ("done", "failed")):
             try:

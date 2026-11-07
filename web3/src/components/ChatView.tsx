@@ -26,6 +26,7 @@ import {
 import { store, useAppState } from "@/lib/store";
 import { fmtArgs, fmtTime, nodeIdLabel } from "@/lib/format";
 import { groupChatMessages } from "@/lib/chat";
+import { ceoPhaseLabel } from "@/lib/ceo";
 import { AutoScroll, Button, Chip, Code, Collapsible, Empty, Spinner } from "@/components/ui";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type { ChatMessage, QueueItem } from "@/types";
@@ -588,6 +589,7 @@ function CommandPanel({ query, onPick }: { query: string; onPick: (cmd: string) 
 // ---------------- 视图 ----------------
 
 export function ChatView() {
+  const ceo = useAppState((s) => s.snap?.ceo);
   const messages = useAppState((s) => s.messages);
   const busy = useAppState((s) => s.busy);
   const recoveryChat = useAppState((s) => Boolean(s.snap?.worker_hold));
@@ -655,7 +657,7 @@ export function ChatView() {
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* 顶栏 */}
       <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-ink-600/15 bg-abyss-900/40 px-5">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <h2 className="font-display text-[15px] font-semibold text-ink-100 truncate">{conversation?.title || "对话工作台"}</h2>
           {archived && <Chip color="dim">已归档</Chip>}
           {!projectSupport && (viewSession ? (
@@ -665,6 +667,7 @@ export function ChatView() {
           ))}
         </div>
         <div className="relative flex items-center gap-2.5">
+          <button className="hidden sm:block shrink-0 rounded-full border border-ceo-400/25 px-3 py-1 text-[11px] text-ceo-300 hover:bg-ceo-400/10" onClick={() => store.selectInst("ceo")} aria-label="查看 CEO 协调活动" title="固定协调者 · 查看 CEO 活动和 Hermes 决策记录">CEO · Hermes</button>
           <button
             className={`num cursor-pointer rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
               queueLen > 0
@@ -680,11 +683,11 @@ export function ChatView() {
           {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
           {busy ? (
             <span className="flex items-center gap-2 rounded-full border border-life-500/30 bg-life-500/10 px-3 py-1 text-[11.5px] text-life-300">
-              <Spinner size={11} /> CEO 正在决策
+              <Spinner size={11} /> {ceoPhaseLabel(ceo, true)}
             </span>
           ) : (
             <span className="flex items-center gap-2 rounded-full border border-ink-600/25 px-3 py-1 text-[11.5px] text-ink-500">
-              <span className="dot" style={{ background: "#3ecf7f", width: 6, height: 6 }} /> 空闲
+              <span className="dot" style={{ background: "#3ecf7f", width: 6, height: 6 }} /> {ceoPhaseLabel(ceo)}
             </span>
           )}
         </div>
@@ -769,7 +772,7 @@ export function ChatView() {
               className="max-h-[160px] w-full resize-none bg-transparent text-[13.5px] leading-6 text-ink-100 outline-none placeholder:text-ink-600"
             />
           </div>
-          <div className="composer-bottom"><span>{scopedRecovery ? "事故恢复中 · 已核准的节点任务运行中" : recoveryChat ? "事故恢复中 · 可以对话，节点任务暂停" : "CEO · Hermes 群体协作"}</span><Button
+          <div className="composer-bottom"><span>{scopedRecovery ? "事故恢复中 · 已核准的节点任务运行中" : recoveryChat ? "事故恢复中 · 可以对话，节点任务暂停" : "CEO 规划与委派 · Worker 执行"}</span><Button
             variant="primary"
             className="composer-send"
             onClick={() => void send()}

@@ -80,6 +80,32 @@ it("会话刷屏保留执行错误与启动事件", () => {
   expect(events.filter(item => item.type === "terminal.activity")).toHaveLength(1);
 });
 
+it("CEO协调状态同时更新聊天快照与图谱，其他会话不能覆盖", async () => {
+  await store.refreshState();
+  (store as unknown as {set:(p:Record<string,unknown>)=>void}).set({viewSession:'chat-a'});
+  store.handleEvent(ev('chat.user',{text:'plan'},'chat-a'));
+  store.handleEvent(ev('chat.ceo_activity',{engine:'hermes',role:'coordinator',phase:'waiting_children',execution_id:'ceo-a'},'chat-a'));
+  expect(store.getState().snap?.ceo?.phase).toBe('waiting_children');
+  expect(store.getState().snap?.ceo_execution_id).toBe('ceo-a');
+  const {displayGraph}=await import('@/lib/graphFlow');
+  expect(displayGraph(store.getState().graph).nodes.find(n=>n.key==='ceo')?.extra.execution_id).toBe('ceo-a');
+  expect(displayGraph(store.getState().graph).nodes.filter(n=>n.type==='round')).toHaveLength(1);
+  expect(store.getState().messages).toHaveLength(1);
+  store.handleEvent(ev('chat.ceo_activity',{engine:'hermes',role:'coordinator',phase:'deciding',execution_id:'ceo-b'},'chat-b'));
+  expect(store.getState().snap?.ceo_execution_id).toBe('ceo-a');
+});
+
+it("重复轮询CEO快照不增加图谱事件，过时快照不能覆盖新阶段", async () => {
+  api.state.mockResolvedValue({...snap(),ceo:{engine:'hermes',role:'coordinator',phase:'deciding',execution_id:'ceo-a',updated_at:10}});
+  await store.refreshState();
+  const count=Object.keys(store.getState().graph.flow?.seen||{}).length;
+  await store.refreshState();
+  expect(Object.keys(store.getState().graph.flow?.seen||{})).toHaveLength(count);
+  store.handleEvent(ev('chat.ceo_activity',{engine:'hermes',role:'coordinator',phase:'waiting_children',execution_id:'ceo-a',updated_at:20}));
+  await store.refreshState();
+  expect(store.getState().snap?.ceo?.phase).toBe('waiting_children');
+});
+
 beforeEach(async () => {
   vi.resetModules();
   vi.useFakeTimers();

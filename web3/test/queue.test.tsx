@@ -96,3 +96,12 @@ it("发送默认排队，待处理消息上的引导原位提升该条目", asyn
   expect(vi.mocked(api.chat).mock.calls.length).toBe(calls);
 });
 
+it("CEO等下属时聊天显示等待阶段，入口打开固定CEO面板", () => {
+  (store as any).set({busy:true,snap:{ceo:{engine:'hermes',role:'coordinator',phase:'waiting_children',execution_id:'ceo-test'}}});
+  render(<ChatView />);
+  expect(screen.getByText('等待下属汇报')).toBeInTheDocument();
+  expect(screen.queryByText('CEO 正在决策')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'查看 CEO 协调活动'}));
+  expect(store.getState().selectedInst).toBe('ceo');
+});
+

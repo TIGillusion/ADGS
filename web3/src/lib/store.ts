@@ -505,6 +505,11 @@ class Store {
     }
 
     // 2) 聊天消息
+    if (ev.type === "chat.ceo_activity") {
+      const ceo = ev.data as unknown as import("@/types").CeoActivity;
+      const snap = this.state.snap;
+      if (snap) this.set({ snap: { ...snap, ceo, ceo_execution_id: ceo.execution_id } });
+    }
     let msg = eventToMessage(ev);
     // 长消息截断兜底（2026-09-29）：旧后端的 chat.user 事件只带前 500 字，
     // 用本地已发送的全文回填，气泡显示完整内容（CEO 始终收到全文，仅显示问题）
@@ -730,8 +735,16 @@ class Store {
         this.executionEvents.clear();
         this.reattachSse();
       }
+      if (snap.ceo && (snap.ceo.updated_at || 0) < (this.state.snap?.ceo?.updated_at || 0)) {
+        snap.ceo = this.state.snap?.ceo;
+        snap.ceo_execution_id = snap.ceo?.execution_id;
+      }
+      const graph = snap.ceo ? applyEventToGraph(this.state.graph, {
+        type: "chat.ceo_activity", ts: 0, data: { ...snap.ceo },
+      }, Date.now()) : this.state.graph;
       this.set({
         snap,
+        graph,
         busy: snap.busy,
         queueLen: snap.queue_len,
         queue: snap.queue ?? [],
@@ -1027,6 +1040,7 @@ class Store {
         graph,
         messages,
         viewSession: name,
+        snap: this.state.snap ? { ...this.state.snap, ceo: undefined, ceo_execution_id: null } : null,
         sessionMeta: { name, saved_at: "" },
         selectedInst: null,
         view: "chat",

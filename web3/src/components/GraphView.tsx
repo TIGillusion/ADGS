@@ -15,6 +15,7 @@ import { GraphCanvas, statusText } from "@/lib/graphCanvas";
 import { nodeIdLabel, scoreTone } from "@/lib/format";
 import { Chip, Empty } from "@/components/ui";
 import { displayGraph } from "@/lib/graphFlow";
+import { ceoPhaseLabel } from "@/lib/ceo";
 
 function GraphTooltip({
   pos,
@@ -53,6 +54,7 @@ function GraphTooltip({
         <div className="clamp-2 mt-1 text-[11.5px] leading-[1.6] text-ink-400">{node.extra.goal}</div>
       )}
       <div className="mt-2 space-y-1 text-[11px] text-ink-500">
+        {node.type === "ceo" && <><div>Hermes · 固定协调者 · {ceoPhaseLabel(node.extra.ceo_activity)}</div><div>制定计划、拆分委派、审阅汇报</div>{node.extra.ceo_activity?.model && <div className="num">{node.extra.ceo_activity.model}</div>}</>}
         {isInst && node.extra.score != null && (
           <div className="flex justify-between">
             <span>评分</span>

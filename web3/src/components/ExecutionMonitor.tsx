@@ -6,6 +6,8 @@ import { api } from "@/lib/api";
 import { fmtAgo, fmtDuration, fmtTime, nodeIdLabel } from "@/lib/format";
 import { store } from "@/lib/store";
 import { TerminalStream } from "@/lib/terminalStream";
+import { ceoPhaseLabel, ceoGraphStatus } from "@/lib/ceo";
+import type { CeoActivity } from "@/types";
 import type { BusEvent, ExecutionAttempt, ExecutionDetail, TerminalRecord } from "@/types";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -15,6 +17,7 @@ const EVENT_LABELS: Record<string, string> = {
   "execution.status": "执行状态", "execution.activity": "工具活动",
   "terminal.started": "终端启动", "terminal.ended": "终端结束", "terminal.activity": "执行活动",
   "terminal.stage": "终端阶段", "terminal.diagnostic": "终端诊断", "hermes.message": "Hermes 会话消息",
+  "chat.ceo_activity": "CEO 协调阶段",
 };
 const STATE_LABELS: Record<string, string> = {
   waiting: "等待执行", queued: "排队中", running: "执行中", evaluating: "验收中",
@@ -199,7 +202,7 @@ function Acceptance({ events }: { events: BusEvent[] }) {
   })}</div>;
 }
 
-export function ExecutionMonitor({ executionId, nodeId, profile }: { executionId: string; nodeId: string; profile: ReactNode }) {
+export function ExecutionMonitor({ executionId, nodeId, profile, coordinator }: { executionId: string; nodeId: string; profile: ReactNode; coordinator?: CeoActivity }) {
   const { execution, error } = useExecution(executionId);
   const liveEvents = useExecutionEvents(executionId);
   const [tab, setTab] = useState("terminal");
@@ -215,7 +218,7 @@ export function ExecutionMonitor({ executionId, nodeId, profile }: { executionId
   }, [execution?.events, liveEvents]);
   const attempts = execution?.attempts ?? [];
   const attempt = attempts.find((a) => a.attempt_id === pickedAttempt) ?? attempts[attempts.length - 1];
-  const state = execution?.state ?? "unknown";
+  const state = coordinator ? ceoGraphStatus(coordinator.phase) : execution?.state ?? "unknown";
   const activity = [...events].reverse().find((ev) => ev.type === "terminal.activity" && ev.data.attempt_id === attempt?.attempt_id);
   const description = String(activity?.data.activity_description ?? "");
   const activityLabel = description.startsWith("receiving stream") ? "模型正在生成响应"
@@ -223,12 +226,13 @@ export function ExecutionMonitor({ executionId, nodeId, profile }: { executionId
     : description.startsWith("executing ") || description.startsWith("sequential tool running") ? "工具正在执行"
     : description;
   return <div className={`execution-monitor ${expanded ? "is-expanded" : ""}`}>
-    <header className="execution-header"><div className="min-w-0"><div className="flex items-center gap-2"><TerminalIcon size={16} className="text-life-400" /><strong>{nodeIdLabel(nodeId)}</strong><span className={`execution-state state-${state}`}>{STATE_LABELS[state] ?? state}</span></div><div className="num execution-id" title={executionId}>{executionId}</div></div>
+    <header className="execution-header"><div className="min-w-0"><div className="flex items-center gap-2"><TerminalIcon size={16} className="text-life-400" /><strong>{nodeIdLabel(nodeId)}</strong><span className={`execution-state state-${state}`}>{coordinator ? ceoPhaseLabel(coordinator) : STATE_LABELS[state] ?? state}</span></div><div className="num execution-id" title={executionId}>{executionId}</div></div>
       <div className="flex gap-1"><button aria-label={expanded ? "收起执行面板" : "展开执行面板"} onClick={() => setExpanded((v) => !v)}><Maximize2 size={16} /></button><button aria-label="关闭" onClick={() => store.selectInst(null)}><X size={17} /></button></div>
     </header>
-    <div className="execution-meta"><span>阶段 <b>{PHASE_LABELS[execution?.phase ?? ""] ?? execution?.phase ?? "等待记录"}</b></span><span>已用时 <b className="num">{execution?.started_at ? fmtDuration(Math.max(0, (execution.ended_at || Date.now() / 1000) - execution.started_at)) : "—"}</b></span><span>最近活动 <b>{execution?.last_activity_at ? fmtAgo(execution.last_activity_at) : "—"}</b></span><span>Profile <b className="num">{execution?.profile || nodeId}</b></span></div>
+    {coordinator && <div className="execution-meta"><span>固定 CEO · Hermes · 只负责协调</span><b>{ceoPhaseLabel(coordinator)}</b></div>}
+    <div className="execution-meta"><span>阶段 <b>{coordinator ? ceoPhaseLabel(coordinator) : PHASE_LABELS[execution?.phase ?? ""] ?? execution?.phase ?? "等待记录"}</b></span><span>已用时 <b className="num">{execution?.started_at ? fmtDuration(Math.max(0, (execution.ended_at || Date.now() / 1000) - execution.started_at)) : "—"}</b></span><span>最近活动 <b>{execution?.last_activity_at ? fmtAgo(execution.last_activity_at) : "—"}</b></span><span>Profile <b className="num">{execution?.profile || nodeId}</b></span></div>
     {activityLabel && attempt?.state === "running" && activity && Date.now() / 1000 - activity.ts < 90 && <div className="execution-meta" title={description}><span>当前活动 <b>{activityLabel}</b></span><span>无进展 <b className="num">{fmtDuration(Number(activity.data.idle_seconds ?? 0))}</b></span></div>}
-    <nav className="execution-tabs">{[["terminal", "实时终端"], ["events", "执行事件"], ["acceptance", "验收"], ["profile", "节点档案"]].map(([key, label]) => <button key={key} className={tab === key ? "is-active" : ""} onClick={() => setTab(key)}>{label}{key === "events" && events.length > 0 && <small>{events.length}</small>}</button>)}</nav>
+    <nav className="execution-tabs">{(coordinator ? [["terminal", "Hermes 决策记录"], ["events", "执行事件"], ["profile", "CEO 职责与技能"]] : [["terminal", "实时终端"], ["events", "执行事件"], ["acceptance", "验收"], ["profile", "节点档案"]]).map(([key, label]) => <button key={key} className={tab === key ? "is-active" : ""} onClick={() => setTab(key)}>{label}{key === "events" && events.length > 0 && <small>{events.length}</small>}</button>)}</nav>
     <div className="execution-body">
       {error && <div className="execution-error">{error}</div>}
       {tab === "terminal" && <>

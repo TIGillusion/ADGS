@@ -1,3 +1,5 @@
+import { ceoPhaseLabel } from "@/lib/ceo";
+
 // ============================================================
 
 // 图谱 Canvas 引擎 — 布局 + 渲染 + 交互（纯 TS，无 React 依赖）
@@ -3078,7 +3080,7 @@ export class GraphCanvas {
 
       // 副标题按六边形宽度截断(9 字 + …),防止长任务名压出光晕
 
-      const rawTitle = n.extra.task_title || "";
+      const rawTitle = n.extra.ceo_activity ? ceoPhaseLabel(n.extra.ceo_activity) : n.extra.task_title || "";
 
       const title = rawTitle.length > 9 ? rawTitle.slice(0, 9) + "…" : rawTitle || "唯一入口";
 

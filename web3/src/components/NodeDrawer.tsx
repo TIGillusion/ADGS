@@ -23,6 +23,8 @@ import { displayGraph } from "@/lib/graphFlow";
 import type { BusEvent } from "@/types";
 import { api } from "@/lib/api";
 import { ExecutionMonitor } from "@/components/ExecutionMonitor";
+import { ceoPhaseLabel } from "@/lib/ceo";
+import type { CeoActivity } from "@/types";
 import {
   nodeHistGet,
   nodeHistSet,
@@ -807,19 +809,30 @@ function TaskDetail({ nodeKey }: { nodeKey: string }) {
 
 // ---------------- 抽屉主体 ----------------
 
+function CeoProfile({ activity }: { activity?: CeoActivity }) {
+  return <div className="p-5 space-y-4" data-testid="ceo-profile"><div className="flex items-center justify-between"><h3 className="font-semibold text-ceo-300">固定 CEO · Hermes</h3><button aria-label="关闭 CEO 档案" onClick={() => store.selectInst(null)}><X size={16} /></button></div>
+    <div className="text-sm text-ink-300">{ceoPhaseLabel(activity)}{activity?.model && <span className="num ml-3 text-ink-500">{activity.model}</span>}</div>
+    <p className="text-sm leading-7 text-ink-400">CEO 负责了解目标、制定计划、拆分委派、审阅汇报与安排返工。可以少量只读查看项目；代码、计算、文件修改、运行验证和报告落盘由 Worker 执行。</p>
+    <div className="text-xs text-ink-500">专用技能：adgs-ceo · 模型可在系统设置中调整。</div>
+    {activity?.hermes_session_id && <div className="num break-all text-xs text-ink-500">Hermes 会话：{activity.hermes_session_id}</div>}
+  </div>;
+}
+
 export function NodeDrawer() {
   const selectedInst = useAppState((s) => s.selectedInst);
   const ceoExecution = useAppState((s) => s.snap?.ceo_execution_id);
+  const ceo = useAppState((s) => s.snap?.ceo);
   const graph = useAppState((s) => displayGraph(s.graph));
   if (!selectedInst) return null;
   const inGraph = graph.nodes.find((n) => n.key === selectedInst);
   // 实例键（node@task）或不在图谱中的裸节点 id → 节点档案视图
   const isInstance = inGraph == null || inGraph.type === "node";
   const { nodeId } = splitInstKey(selectedInst);
-  const executionId = selectedInst === "ceo" ? ceoExecution : inGraph?.extra.execution_id;
+  const ceoActivity = ceo ?? inGraph?.extra.ceo_activity;
+  const executionId = selectedInst === "ceo" ? ceo?.execution_id || ceoExecution || inGraph?.extra.execution_id : inGraph?.extra.execution_id;
   return (
     <ResizableDrawerFrame key={executionId ? "execution" : "node"} defaultWidth={executionId ? 860 : 440}>
-      {executionId ? <ExecutionMonitor key={executionId} executionId={executionId} nodeId={nodeId} profile={selectedInst === "ceo" ? <div className="p-4">固定 CEO · Hermes<br />模型可在系统设置中调整。</div> : <InstanceDetail key={selectedInst} nodeId={nodeId} instKey={selectedInst} hideLogs />} /> : isInstance ? (
+      {executionId ? <ExecutionMonitor key={executionId} executionId={executionId} nodeId={nodeId} coordinator={selectedInst === "ceo" ? ceoActivity || {engine:"hermes",role:"coordinator",phase:"idle"} : undefined} profile={selectedInst === "ceo" ? <CeoProfile activity={ceoActivity} /> : <InstanceDetail key={selectedInst} nodeId={nodeId} instKey={selectedInst} hideLogs />} /> : selectedInst === "ceo" ? <CeoProfile activity={ceoActivity} /> : isInstance ? (
         <InstanceDetail key={selectedInst} nodeId={nodeId} instKey={selectedInst} />
       ) : (
         <TaskDetail key={selectedInst} nodeKey={selectedInst} />

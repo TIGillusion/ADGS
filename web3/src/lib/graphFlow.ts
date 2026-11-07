@@ -1,5 +1,7 @@
 import type { BusEvent, GraphNode } from "@/types";
 import type { GraphState } from "@/lib/graph";
+import { ceoGraphStatus } from "@/lib/ceo";
+import type { CeoActivity } from "@/types";
 
 export interface FlowContract {
   id: string;
@@ -21,7 +23,7 @@ export interface FlowSnapshot {
   seen: Record<string, true>;
 }
 export const FLOW_EVENTS = new Set([
-  "chat.user", "chat.ceo_tool", "chat.ceo_ask", "chat.ceo_report", "chat.ceo_finish", "chat.ceo_end",
+  "chat.user", "chat.ceo_tool", "chat.ceo_ask", "chat.ceo_report", "chat.ceo_finish", "chat.ceo_end", "chat.ceo_activity",
   "graph.task", "graph.dispatch", "graph.instruction", "node.rework", "node.brain", "node.eval",
   "node.status", "graph.node_status", "a2a.delegate", "a2a.verdict", "a2a.escalate",
 ]);
@@ -174,7 +176,15 @@ export function recordFlowEvent(previous: FlowSnapshot | undefined, event: BusEv
   const task = str(d.task_id ?? d.task ?? d.id);
   const execution = str(d.execution_id);
   const nodeId = str(d.node);
-  if (event.type === "chat.user") {
+  if (event.type === "chat.ceo_activity") {
+    const ceo = get("ceo");
+    if (ceo) {
+      ceo.extra.ceo_activity = d as unknown as CeoActivity;
+      ceo.extra.execution_id = str(d.execution_id) || undefined;
+      ceo.extra.attempt_id = str(d.attempt_id) || undefined;
+      ceo.status = ceoGraphStatus(str(d.phase));
+    }
+  } else if (event.type === "chat.user") {
     const r = round("ceo", str(d.text), undefined, true); append(r.key);
   } else if (event.type.startsWith("chat.ceo_")) {
     opToOwner("ceo");

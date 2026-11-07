@@ -1,0 +1,64 @@
+import json
+import sys
+from types import ModuleType, SimpleNamespace
+
+from core.ceo_policy import coordinator_guidance, sync_ceo_role
+
+
+def test_ceo_role_sync_preserves_previous_persona_and_worker(tmp_path):
+    ceo = tmp_path / "ceo"
+    worker = tmp_path / "worker"
+    ceo.mkdir()
+    worker.mkdir()
+    (ceo / "SOUL.md").write_text("generic agent", encoding="utf-8")
+    (worker / "SOUL.md").write_text("worker persona", encoding="utf-8")
+    sync_ceo_role(ceo)
+    assert "固定 CEO" in (ceo / "SOUL.md").read_text(encoding="utf-8")
+    assert (ceo / "skills/adgs-ceo/SKILL.md").is_file()
+    assert list((ceo / "backups/adgs-role").iterdir())[0].read_text() == "generic agent"
+    sync_ceo_role(ceo)
+    assert len(list((ceo / "backups/adgs-role").iterdir())) == 1
+    assert (worker / "SOUL.md").read_text() == "worker persona"
+    assert "single_task" in coordinator_guidance()
+
+
+def test_ceo_native_tools_cannot_execute_code_or_write_files(tmp_path, monkeypatch):
+    from core.hermes_roles import install_role_tools
+    schemas = tmp_path / "schemas.json"
+    schemas.write_text(json.dumps([{"function": {"name": n, "parameters": {"type": "object"}}}
+                                   for n in ("read_file", "split_tasks", "continue_task")]))
+    monkeypatch.setenv("ADGS_CONTROL_TOOLS", str(schemas))
+    monkeypatch.setenv("ADGS_CONTROL_DECISION", str(tmp_path / "receipt.json"))
+    module = ModuleType("model_tools")
+    agent = ModuleType("agent")
+    invocations = []
+    executor = SimpleNamespace(_dispatch_authorized_once=lambda *a, **kw: invocations.append(kw))
+    agent.tool_executor = executor
+    registry = ModuleType("tools.registry")
+    registry.registry = SimpleNamespace(register=lambda *a, **kw: None)
+    for name, value in (("model_tools", module), ("agent", agent), ("tools.registry", registry)):
+        monkeypatch.setitem(sys.modules, name, value)
+    install_role_tools()
+    for name in ("terminal", "write_file", "delegate_task", "browser", "skill_manage"):
+        executor._dispatch_authorized_once(None, None, SimpleNamespace(name=name), scope_block=None)
+        assert "协调" in invocations[-1]["scope_block"]
+    for name in ("read_file", "split_tasks", "continue_task"):
+        executor._dispatch_authorized_once(None, None, SimpleNamespace(name=name), scope_block=None)
+        assert invocations[-1]["scope_block"] is None
+
+
+def test_activity_is_persistent_per_chat_and_does_not_create_work(tmp_path, monkeypatch):
+    import core.ceo as module
+    monkeypatch.setattr(module.config, "DATA_DIR", tmp_path)
+    ceo = module.CEO()
+    ceo.activate_session("coordinator-a")
+    ceo._hermes_execution_id = "ceo-a"
+    ceo._set_activity("waiting_children")
+    ceo.save_conversation("coordinator-a")
+    restored = module.CEO()
+    restored.load_conversation("coordinator-a")
+    assert restored._ceo_activity["phase"] == "waiting_children"
+    assert restored._ceo_activity["execution_id"] == "ceo-a"
+    restored._active = "coordinator-b"
+    assert restored._ceo_activity is None
+    assert not restored._facts_for()["tasks"]
