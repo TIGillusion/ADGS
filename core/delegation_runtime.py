@@ -1,6 +1,5 @@
 """Execution slots can be lent to descendants while a worker waits on MCP."""
 import threading
-import time
 from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import copy_context
@@ -51,7 +50,7 @@ class ExecutionSlot:
                     if resume:
                         self.resuming = True
             if resume:
-                acquired = self.semaphore.acquire(timeout=max(0.0, self.deadline-time.monotonic()), cancel=self)
+                acquired = self.semaphore.acquire(cancel=self)
                 with self.lock:
                     self.resuming = False
                     closed = self.closed
@@ -62,7 +61,7 @@ class ExecutionSlot:
                 if not acquired and not closed:
                     if self.cancel is not None:
                         self.cancel.set()
-                    raise TimeoutError('等待下属后未能在预算内重新取得执行名额')
+                    raise TimeoutError('等待下属后重新取得执行名额已取消')
 
 
 @contextmanager
@@ -90,6 +89,15 @@ def lend_execution_slot(execution_id):
     else:
         with slot.lend():
             yield
+
+
+def execution_is_waiting(execution_id):
+    with _slots_lock:
+        slot = _slots.get(execution_id)
+    if slot is None:
+        return False
+    with slot.lock:
+        return not slot.closed and (slot.waiters > 0 or slot.resuming or not slot.held)
 
 
 class DelegationThreads:

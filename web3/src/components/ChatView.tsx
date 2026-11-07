@@ -769,7 +769,7 @@ export function ChatView() {
               className="max-h-[160px] w-full resize-none bg-transparent text-[13.5px] leading-6 text-ink-100 outline-none placeholder:text-ink-600"
             />
           </div>
-          <div className="composer-bottom"><span>{scopedRecovery ? "事故恢复中 · 已核准的节点任务运行中" : recoveryChat ? "事故恢复中 · 可以对话，节点任务暂停" : "CEO · 全局群体协作"}</span><Button
+          <div className="composer-bottom"><span>{scopedRecovery ? "事故恢复中 · 已核准的节点任务运行中" : recoveryChat ? "事故恢复中 · 可以对话，节点任务暂停" : "CEO · Hermes 群体协作"}</span><Button
             variant="primary"
             className="composer-send"
             onClick={() => void send()}

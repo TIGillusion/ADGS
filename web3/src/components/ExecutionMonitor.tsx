@@ -24,7 +24,7 @@ const STATE_LABELS: Record<string, string> = {
   waiting_user: "等待澄清", protocol_error: "汇报待修复", evaluation_unavailable: "验收暂不可用",
   context_overflow: "上下文待恢复",
 };
-const PHASE_LABELS: Record<string, string> = { decision: "节点决策", delegation: "委派执行", acceptance: "验收", execute: "执行", executing: "执行", evaluating: "验收", evaluation: "验收", rework: "补充与返工", resume: "继续会话", finished: "已结束" };
+const PHASE_LABELS: Record<string, string> = { coordinating: "协调下属", decision: "节点决策", delegation: "委派执行", acceptance: "验收", execute: "执行", executing: "执行", evaluating: "验收", evaluation: "验收", rework: "补充与返工", resume: "继续会话", finished: "已结束" };
 
 function useExecutionEvents(id: string): BusEvent[] {
   return useSyncExternalStore(
@@ -165,8 +165,12 @@ export function TerminalView({ attempt }: { attempt: ExecutionAttempt }) {
 
 function EventTimeline({ events }: { events: BusEvent[] }) {
   const [filter, setFilter] = useState("");
-  const shown = events.filter((ev) => !["hermes.heartbeat", "terminal.activity"].includes(ev.type) && (!filter || `${ev.type} ${JSON.stringify(ev.data)}`.toLowerCase().includes(filter.toLowerCase())));
+  const [showMessages, setShowMessages] = useState(false);
+  const shown = events.filter((ev) => !["hermes.heartbeat", "terminal.activity", "terminal.output", "hermes.line"].includes(ev.type)
+    && (showMessages || ev.type !== "hermes.message")
+    && (!filter || `${ev.type} ${JSON.stringify(ev.data)}`.toLowerCase().includes(filter.toLowerCase())));
   return <div className="execution-events"><input className="input mb-4" aria-label="搜索执行事件" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="搜索工具、阶段、决策或错误…" />
+    <label className="mb-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={showMessages} onChange={(e) => setShowMessages(e.target.checked)} />显示 Hermes 会话消息</label>
     {!shown.length && <div className="execution-empty">等待执行事件…</div>}
     {shown.map((ev, i) => <details className={`execution-event ${ev.type === "node.eval" ? "is-evaluation" : ""}`} key={ev.id ?? `${ev.ts}-${i}`}>
       <summary><span className="num event-time">{fmtTime(ev.ts)}</span><span>{EVENT_LABELS[ev.type] ?? ev.type}</span><span className="event-preview">{String(ev.data.phase ?? ev.data.action ?? ev.data.status ?? ev.data.tool ?? ev.data.detail ?? "").slice(0, 140)}</span></summary>

@@ -63,12 +63,13 @@ def _sync_opencode_plugin(profile_name: str) -> bool:
     顶层 .hermes/plugins/model-providers/opencode/ 是共享源。
     """
     try:
-        if not _OPENCODE_PLUGIN_SRC.exists():
+        source = _OPENCODE_PLUGIN_SRC if _OPENCODE_PLUGIN_SRC.is_dir() else _ROOT / "tools" / "hermes_opencode"
+        if not all((source / name).is_file() for name in ("__init__.py", "plugin.yaml")):
             return False
         dst = PROFILES_DIR / profile_name / "plugins" / "model-providers" / "opencode"
         dst.mkdir(parents=True, exist_ok=True)
         for fn in ("__init__.py", "plugin.yaml"):
-            src_f = _OPENCODE_PLUGIN_SRC / fn
+            src_f = source / fn
             if src_f.exists():
                 shutil.copy2(src_f, dst / fn)
         return True
@@ -366,7 +367,7 @@ def _mesh_plugin_current(profile_name=None):
         return False
 
 
-def _profile_ready(profile_name):
+def _profile_ready(profile_name, mesh_required=None):
     try:
         data = _load_profile_config(profile_name)
         model = data.get("model") or {}
@@ -379,7 +380,8 @@ def _profile_ready(profile_name):
             disabled = [part.strip() for part in disabled.split(",") if part.strip()]
         if "clarify" not in disabled:
             return False
-        if _merged_brain_enabled() and ("delegation" not in disabled or not _mesh_plugin_current(profile_name)):
+        merged = _merged_brain_enabled() if mesh_required is None else mesh_required
+        if merged and ("delegation" not in disabled or not _mesh_plugin_current(profile_name)):
             return False
         if model.get("provider") == "opencode":
             provider = (data.get("providers") or {}).get("opencode") or {}
@@ -394,7 +396,7 @@ def _profile_ready(profile_name):
         return False
 
 
-def _configure_profile(profile_name, worker_cfg, overwrite_model=False):
+def _configure_profile(profile_name, worker_cfg, overwrite_model=False, mesh_required=None):
     """Atomic YAML update, preserving unrelated values and old model snapshots."""
     import yaml
     try:
@@ -440,7 +442,8 @@ def _configure_profile(profile_name, worker_cfg, overwrite_model=False):
         if "clarify" not in disabled:
             agent["disabled_toolsets"] = [*disabled, "clarify"]
             disabled = agent["disabled_toolsets"]
-        if _merged_brain_enabled():
+        merged = _merged_brain_enabled() if mesh_required is None else mesh_required
+        if merged:
             if "delegation" not in disabled:
                 # A2A 合并模式：硬禁 hermes 内部 subagent 委派（delegate_task），
                 # 节点间协作只走 adgs-mesh MCP 工具，两条委派链路不混淆。
@@ -456,9 +459,9 @@ def _configure_profile(profile_name, worker_cfg, overwrite_model=False):
             temporary = home / (".config." + uuid.uuid4().hex + ".tmp")
             temporary.write_text(after, encoding="utf-8")
             temporary.replace(home / "config.yaml")
-        if _merged_brain_enabled():
+        if merged:
             _ensure_mesh_plugin(profile_name)
-        return _profile_ready(profile_name)
+        return _profile_ready(profile_name, mesh_required=mesh_required)
     except (OSError, ValueError, TypeError, AttributeError, yaml.YAMLError):
         # No credentials or config values are included in diagnostics.
         return False

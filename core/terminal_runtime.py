@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import uuid
+import psutil
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -323,12 +324,20 @@ FROZEN_HERMES = ROOT / "runtime" / "hermes" / "hermes-agent-cn-runtime-win32-x64
 def hermes_frozen_exe():
     """项目内打包版 hermes（PyInstaller 冻结 CLI，相对路径解析）。
 
-    存在即优先于系统安装：ADGS 与外部 hermes 升级解耦，不受官方更新冲掉
-    carried 补丁的影响。注意：冻结 exe 直接执行 CLI，不经过 hermes_worker
+    兼容未启用源码包装器的运行环境。协调者角色限制和 CEO 原生工具桥接
+    使用源码包装器。注意：冻结 exe 直接执行 CLI，不经过 hermes_worker
     包装层（provider_compat / resume_projection / TurnReceipt 补丁不生效）
     ——profile 已自洽（显式 providers 段），2026-10-25 实测真实调用通过。
     """
     return FROZEN_HERMES if FROZEN_HERMES.is_file() else None
+
+
+def hermes_source_available():
+    try:
+        hermes_installation()
+        return True
+    except RuntimeError:
+        return False
 
 
 def _emit(name, **data):
@@ -340,7 +349,8 @@ def _activity_is_progress(description):
     # Hermes refreshes these labels while no provider data has arrived. They
     # prove liveness, but must not indefinitely reset our inactivity watchdog.
     text = str(description or "").strip().lower()
-    return not text.startswith(("waiting for ", "local model loading"))
+    return bool(text) and not text.startswith(("waiting for ", "local model loading",
+                                               "executing ", "sequential tool running"))
 
 
 def _session_snapshot(home, session_id, cursor, activity_details=None):
@@ -434,7 +444,7 @@ def _sync_recovery_database(source, destination, allowed_sessions):
 def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                inactivity_timeout=1800, session_id=None, execution_id=None,
                attempt_id=None, run_id=None, task_id=None, live_log=None,
-               backend=None, store=None, cancel=None):
+               backend=None, store=None, cancel=None, control_tools=None):
     store = store or terminal_store
     from core.execution_store import WORKER_HOLD_REASON, recovery_grant, worker_launch_on_hold
     held = worker_launch_on_hold(store.root)
@@ -496,6 +506,8 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
     last_database_activity = 0
     activity_details = {}
     state_cursor = 0
+    process_samples = {}
+    observed_tools = {}
     final_response = ""
     reason, error, exit_code = "completed", "", -1
     started = time.monotonic()
@@ -505,6 +517,8 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
     breadcrumb = profile_home / "terminal-sessions" / f"term_session_id-{terminal_identity}"
     gate = directory / "launch.gate"
     receipt = directory / "turn-receipt.json"
+    decision = directory / "ceo-decision.json"
+    coordinator_flag = directory / "coordinator.flag"
 
     def feed(text):
         # pywinpty can hand out split UTF-16 surrogate units at read
@@ -527,7 +541,7 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             seq = store.append(attempt_id, "data", {"text": text})
             # A spinner redraw is display activity, not proof of task progress.
             visible = _ANSI.sub("", text).strip("\r\n \b")
-            if visible:
+            if visible and "\n" in text and _activity_is_progress(visible):
                 last_progress[0] = time.monotonic()
         _emit("terminal.output", **ids, seq=seq, data=text)
         _emit("hermes.line", **ids, line=text, err=False)
@@ -542,7 +556,8 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             lease = SessionLease(profile_home, session_id)
             session_leases[session_id] = lease
         # Recovery needs the source wrapper's launch gate and turn receipts.
-        frozen = None if grant else hermes_frozen_exe()
+        frozen = None if grant or control_tools or (os.environ.get("ADGS_HERMES_ROLE_GUARD", "1") == "1"
+            and hermes_source_available()) else hermes_frozen_exe()
         if frozen:
             # 打包版：直接执行冻结 CLI（worker 包装层不适用，见 hermes_frozen_exe）
             cmd = [str(frozen), "--yolo", "--profile", profile]
@@ -561,6 +576,16 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
         for key in ("ZELLIJ_PANE_ID", "TMUX_PANE", "KITTY_WINDOW_ID", "WEZTERM_PANE"):
             env.pop(key, None)
         env.update({"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "TERM": "xterm-256color", "TERM_SESSION_ID": terminal_identity, "ADGS_HERMES_RUN": "1", "ADGS_HERMES_RECEIPT": str(directory / "turn-receipt.json"), "HERMES_HOME": str(hermes_home)})
+        env["ADGS_COORDINATOR_FLAG"] = str(coordinator_flag)
+        if control_tools:
+            tools_file = directory / "ceo-tools.json"
+            tools_file.write_text(json.dumps(control_tools, ensure_ascii=False), encoding="utf-8")
+            env["ADGS_CONTROL_TOOLS"] = str(tools_file)
+            env["ADGS_CONTROL_DECISION"] = str(decision)
+        else:
+            from core.execution_store import execution_store
+            if (execution_store.get(execution_id) or {}).get("coordinator"):
+                coordinator_flag.touch()
         if grant:
             scratch = hermes_home / "tmp" / attempt_id
             scratch.mkdir(parents=True, exist_ok=False)
@@ -616,8 +641,29 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
         last_poll = 0
         while alive():
             now = time.monotonic()
+            if control_tools and decision.is_file():
+                reason, error = "decision_ready", ""
+                break
             if now - last_poll >= 1:
                 last_poll = now
+                # Long-running tool processes may make progress without printing.
+                # Ignore the Hermes owner and console/spinner processes.
+                try:
+                    current_samples = {}
+                    for child in psutil.Process(proc.pid).children(recursive=True):
+                        if child.name().lower() in {"conhost.exe", "openconsole.exe"}:
+                            continue
+                        cpu = child.cpu_times()
+                        io = child.io_counters()
+                        sample = (cpu.user + cpu.system, io.read_bytes, io.write_bytes)
+                        identity = (child.pid, child.create_time())
+                        previous = process_samples.get(identity)
+                        if previous and any(value > old for value, old in zip(sample, previous)):
+                            last_progress[0] = now
+                        current_samples[identity] = sample
+                    process_samples = current_samples
+                except (OSError, psutil.Error):
+                    pass
                 try:
                     # The CLI breadcrumb can retain the pre-compression ID.
                     # Once known, follow SessionDB's lineage rather than resetting
@@ -643,6 +689,21 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                             continue
                         last_progress[0] = now
                         _emit("hermes.message", **ids, session_id=observed_session, message=message)
+                        calls = message.get("tool_calls") or []
+                        if isinstance(calls, str):
+                            try:
+                                calls = json.loads(calls)
+                            except ValueError:
+                                calls = []
+                        for call in calls if isinstance(calls, list) else []:
+                            function = call.get("function") or {}
+                            name = function.get("name") or call.get("name") or "tool"
+                            observed_tools[call.get("id")] = name
+                            _emit("tool.start", **ids, tool=name, tool_call_id=call.get("id"))
+                        if message.get("role") == "tool":
+                            name = message.get("tool_name") or observed_tools.get(message.get("tool_call_id"), "tool")
+                            _emit("tool.end", **ids, tool=name, tool_call_id=message.get("tool_call_id"),
+                                  result_preview=str(message.get("content") or "")[:500])
                         if message["role"] == "assistant" and message["content"] and not message["tool_calls"]:
                             final_response = message["content"]
                     if observed_session:
@@ -655,10 +716,14 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             if cancellation.is_set():
                 reason, error = "cancelled", "Cancelled by operator"
                 break
-            if now - started > timeout:
+            if timeout is not None and now - started > timeout:
                 reason, error = "wall_timeout", f"Wall timeout ({timeout}s)"
                 break
-            if now - last_progress[0] > inactivity_timeout:
+            from core.delegation_runtime import execution_is_waiting
+            waiting_for_children = execution_is_waiting(execution_id)
+            if waiting_for_children:
+                last_progress[0] = now
+            if not waiting_for_children and now - last_progress[0] > inactivity_timeout:
                 reason, error = "inactivity_timeout", f"No observed task activity ({inactivity_timeout}s)"
                 break
             # Detect actual unattended startup prompts rather than spending a task timeout.
@@ -678,7 +743,12 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 reason, error = "input_required", "Hermes startup requires operator input"
                 break
             time.sleep(0.2)
-        if reason != "completed":
+        if reason == "decision_ready":
+            if job:
+                job.terminate()
+            elif proc is not None:
+                proc.terminate()
+        elif reason != "completed":
             store.update(attempt_id, status="stopping")
             try:
                 if backend == "conpty":
@@ -698,6 +768,8 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 os.killpg(proc.pid, signal.SIGKILL)
         _emit("terminal.stage", **ids, phase="process_exited", elapsed_seconds=round(time.monotonic()-started, 3))
         exit_code = int(proc.exitstatus if backend == "conpty" else proc.wait(timeout=5))
+        if reason == "decision_ready":
+            reason, exit_code = "completed", 0
         if job:
             job.terminate()
         _emit("terminal.stage", **ids, phase="tree_reaped", elapsed_seconds=round(time.monotonic()-started, 3))

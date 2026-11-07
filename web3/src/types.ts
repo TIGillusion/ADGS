@@ -152,6 +152,7 @@ export interface ProjectItem {
 
 export interface StateSnapshot {
   event_id?: number;
+  ceo_execution_id?: string | null;
   worker_hold?: boolean;
   capabilities?: { projects?: boolean; concurrent_sessions?: boolean; queue_guidance?: boolean };
   runs?: Record<string, { busy: boolean; workspace?: string; started_at?: number; recovery_execution?: string }>;

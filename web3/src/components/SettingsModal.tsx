@@ -109,13 +109,13 @@ const RUNTIME_FIELDS: {
   },
   {
     key: "worker_timeout",
-    label: "任务超时（秒）",
-    hint: "单次 hermes 执行的总墙钟上限；长文/大批量任务会自动放宽",
+    label: "模型请求预算（秒）",
+    hint: "决策和验收的单次请求预算，任务执行、排队和等待下属没有总墙钟上限",
   },
   {
     key: "inactivity_timeout",
     label: "无活动超时（秒）",
-    hint: "hermes 无输出多久判定卡死并 kill（走 kill+resume 修正）。LLM 排队期间也无输出，别设太小",
+    hint: "持续没有模型内容、工具结果或子进程计算与读写进展才暂停。等待下属和执行名额不计时",
   },
 ];
 

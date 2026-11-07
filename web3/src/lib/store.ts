@@ -665,7 +665,15 @@ class Store {
     if (!id || ev.type === "terminal.output" || ev.type === "hermes.line" || ev.type === "hermes.agentlog") return;
     const events = this.executionEvents.get(id) ?? [];
     if (ev.id && events.some((item) => item.id === ev.id)) return;
-    this.executionEvents.set(id, [...events, ev].slice(-500));
+    const activityTypes = ["terminal.activity", "hermes.heartbeat"];
+    const retained = activityTypes.includes(ev.type)
+      ? events.filter(item => item.type !== ev.type || item.data?.attempt_id !== ev.data?.attempt_id)
+      : events;
+    const combined = [...retained, ev];
+    const messages = combined.filter(item => item.type === "hermes.message").slice(-100);
+    const important = combined.filter(item => item.type !== "hermes.message").slice(-500);
+    const keep = new Set([...messages, ...important]);
+    this.executionEvents.set(id, combined.filter(item => keep.has(item)));
     for (const fn of this.executionListeners.get(id) ?? []) fn();
     if (this.executionEvents.size > 200) this.executionEvents.delete(this.executionEvents.keys().next().value!);
   }

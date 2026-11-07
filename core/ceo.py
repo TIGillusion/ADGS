@@ -71,6 +71,8 @@ class CEO:
         "_split_sigs": [], "_compress_count": 0, "_loop_active": False,
         "_loop_hint_pending": False, "_task_done": False, "_explore_count": 0,
         "_run_id": None, "_awaiting_input": False,
+        "_hermes_session_id": None, "_hermes_execution_id": None,
+        "_hermes_input_count": 0, "_hermes_input_hash": "",
     }
 
     def __getattr__(self, name):
@@ -130,7 +132,8 @@ class CEO:
     _CONSEC_EXCLUDE = ("report", "finish")
 
     def __init__(self):
-        self.chat = CHAT(url=config.ceo_url, model=config.ceo_model, key=config.ceo_key)
+        from core.hermes_ceo import HermesCEOChat
+        self.chat = HermesCEOChat(self, url=config.ceo_url, model=config.ceo_model, key=config.ceo_key)
         # ---- 多会话上下文（2026-08-28）：每个历史任务（会话）拥有独立的
         #      history / workflow_log，任务间完全隔离；切换会话 = 切换活跃
         #      上下文，正在执行的任务锁定自己的上下文不受影响。----

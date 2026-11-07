@@ -56,6 +56,9 @@ def main():
     if os.environ.get("ADGS_HERMES_RUN") == "1":
         from provider_compat import install_openai_compat
         install_openai_compat()
+        if (source / "run_agent.py").is_file():
+            from hermes_roles import install_role_tools
+            install_role_tools()
         if "--resume" in sys.argv:
             from resume_projection import install_resume_projection
             install_resume_projection(Path(os.environ["ADGS_HERMES_RECEIPT"]).parent)

@@ -68,6 +68,18 @@ const ev = (type: string, data: Record<string, unknown>, session?: string): BusE
 let store: Awaited<typeof import("@/lib/store")>["store"];
 let api: Record<string, ReturnType<typeof vi.fn>>;
 
+it("会话刷屏保留执行错误与启动事件", () => {
+  store.handleEvent(ev("terminal.started", { execution_id: "e", attempt_id: "a" }));
+  for (let index = 0; index < 650; index++) {
+    store.handleEvent(ev("hermes.message", { execution_id: "e", message: { content: "message" } }));
+    store.handleEvent(ev("terminal.activity", { execution_id: "e", attempt_id: "a", elapsed_seconds: index }));
+  }
+  const events = store.getExecutionEvents("e");
+  expect(events.some(item => item.type === "terminal.started")).toBe(true);
+  expect(events.filter(item => item.type === "hermes.message")).toHaveLength(100);
+  expect(events.filter(item => item.type === "terminal.activity")).toHaveLength(1);
+});
+
 beforeEach(async () => {
   vi.resetModules();
   vi.useFakeTimers();

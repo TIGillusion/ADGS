@@ -80,6 +80,9 @@ class EventBus:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=NORMAL")
             self._db.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)")
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS events_execution_type ON events "
+                "(json_extract(payload,'$.data.execution_id'), json_extract(payload,'$.type'), id)")
             # Sparse structural index: historical graph loads must not scan terminal output.
             self._db.execute(
                 "CREATE INDEX IF NOT EXISTS events_session_interaction ON events "
@@ -110,11 +113,23 @@ class EventBus:
             if self._db:
                 rows = self._db.execute(
                     "SELECT payload FROM events WHERE json_extract(payload,'$.data.execution_id')=? "
-                    "AND json_extract(payload,'$.type') NOT IN ('terminal.output','hermes.line') "
+                    "AND json_extract(payload,'$.type') NOT IN ('terminal.output','hermes.line','terminal.activity','hermes.heartbeat','hermes.message') "
                     "ORDER BY id DESC LIMIT ?", (execution_id, limit)).fetchall()
-                return [json.loads(row[0]) for row in reversed(rows)]
-            return [e for e in self._history if e["data"].get("execution_id") == execution_id
-                    and e["type"] not in ("terminal.output", "hermes.line")][-limit:]
+                chatter = self._db.execute(
+                    "SELECT payload FROM events WHERE json_extract(payload,'$.data.execution_id')=? "
+                    "AND json_extract(payload,'$.type')='hermes.message' ORDER BY id DESC LIMIT 100",
+                    (execution_id,)).fetchall()
+                activity = self._db.execute(
+                    "SELECT payload FROM events WHERE json_extract(payload,'$.data.execution_id')=? "
+                    "AND json_extract(payload,'$.type')='terminal.activity' ORDER BY id DESC LIMIT 1",
+                    (execution_id,)).fetchall()
+                return sorted([json.loads(row[0]) for row in rows + chatter + activity], key=lambda e: e["id"])
+            selected = [e for e in self._history if e["data"].get("execution_id") == execution_id]
+            important = [e for e in selected if e["type"] not in (
+                "terminal.output", "hermes.line", "terminal.activity", "hermes.heartbeat", "hermes.message")][-limit:]
+            messages = [e for e in selected if e["type"] == "hermes.message"][-100:]
+            activity = [e for e in selected if e["type"] == "terminal.activity"][-1:]
+            return sorted(important + messages + activity, key=lambda e: e.get("id", e["ts"]))
 
     def session_graph_events(self, session):
         """Replay structural and delegation events even after the in-memory tail expires."""

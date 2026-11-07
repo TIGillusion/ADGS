@@ -66,13 +66,13 @@ router:
 agent:
   correction_limit: 3     # 任务修正上限（kill+resume）
   rework_limit: 3         # 验收返工上限（验收不通过时同 session 继续修正）
-  max_workers: 2          # 并行派发线程数（上限）
+  max_workers: 5          # 全局同时工作的 Hermes 上限，排队与等待下属不占用
   # vLLM 服务器并发上限：生效并行度 = min(max_workers, vllm_concurrency)。
   # 服务器并发不足时排队是正常现象（LLM 请求在 vLLM 队列等待），不是错误——
   # 把并行度对齐到服务器并发，让排队发生在 ADGS 派发层（等待无超时、不误杀），
   # 而不是 vLLM 层（hermes 等响应时无输出，会被无活动超时误判卡死而 kill）。
   # 服务器扩容后调大此值即可恢复更高并行。
-  vllm_concurrency: 3          # 生效并行度 = min(max_workers, 3) = 2
+  vllm_concurrency: 5          # 与全局执行上限一致
   max_delegation_depth: 5 # 节点间递归委派最大深度（防无限拆分；到顶强制自己执行）
   merged_brain: true        # 节点大脑合并（A2A）：worker(hermes) 直接承担拆分/委派决策，
                              # 经 MCP 工具(list_nodes/delegate_to_node/wait_delegation)与其他节点协作；
@@ -84,9 +84,9 @@ agent:
 # 服务器并发不足时 LLM 请求会排队（正常现象），排队期间 hermes 同样无输出——
 # 超时值须覆盖「排队 + 生成」总时长，否则排队会被无活动超时误杀（实测 600s 误杀）。
 hermes:
-  worker_timeout: 3600        # 总墙钟超时(秒) 60分钟（覆盖排队+生成，原 1800）
-  inactivity_timeout: 1800    # 无活动超时(秒) 30分钟（原 600，排队等待 LLM 响应时无输出）
-  long_task_timeout: 7200     # 长任务超时(秒) 2小时（任务书含长文/大规模关键词时用）
+  worker_timeout: 3600        # 单次决策/验收的模型请求预算；不限制整个任务时长
+  inactivity_timeout: 1800    # 正在执行且无进展的容忍秒数；等待下属/执行名额暂停计时
+  long_task_timeout: 7200     # 兼容历史长任务预算；正常 Hermes 执行不设总墙钟截止时间
 
 # 打分与进化学习
 scoring:

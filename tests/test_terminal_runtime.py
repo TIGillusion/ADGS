@@ -167,6 +167,8 @@ def main():
     db.execute("INSERT INTO messages(session_id,role,content,timestamp) VALUES (?,'assistant',?,?)", (sid,"RESULT-"+text,time.time()))
     db.commit()
     db.close()
+    if text == "busy":
+        subprocess.run([sys.executable, "-c", "import time; end=time.monotonic()+4; exec('while time.monotonic()<end: pass')"], check=True)
     time.sleep(30 if text == "long" else 1.2)
 ''', encoding="utf-8")
     (tmp_path / "core").mkdir()
@@ -329,6 +331,25 @@ def test_waiting_heartbeats_cannot_prevent_inactivity_timeout(fake_installation,
     assert any(data.get("activity_description") == "waiting for non-streaming API response" for name, data in events if name == "terminal.activity")
 
 
+def test_quiet_computing_child_is_progress_without_total_deadline(fake_installation):
+    store, _ = fake_installation
+    started = time.monotonic()
+    result = runtime.run_hermes("ags_140", "busy", execution_id="computing", attempt_id="busy",
+                               backend="pipe", timeout=None, inactivity_timeout=2.5, store=store)
+    assert result["exit_code"] == 0, result
+    assert time.monotonic() - started > 4
+
+
+def test_waiting_for_children_pauses_inactivity_watchdog(fake_installation, monkeypatch):
+    from core import delegation_runtime
+    store, _ = fake_installation
+    monkeypatch.setattr(delegation_runtime, "execution_is_waiting", lambda _: True)
+    result = runtime.run_hermes("ags_140", "long", execution_id="parent-wait",
+                               attempt_id="parent-wait", backend="pipe", timeout=3,
+                               inactivity_timeout=0.3, store=store)
+    assert result["termination_reason"] == "wall_timeout"
+
+
 def test_session_snapshot_exposes_waiting_activity(tmp_path):
     import sqlite3
     with sqlite3.connect(tmp_path / "state.db") as conn:
@@ -407,8 +428,8 @@ def test_normal_exit_reaps_background_descendants(fake_installation, backend):
     import win32api
     import win32con
     store, _ = fake_installation
-    result = runtime.run_hermes("ags_140", "child", execution_id="e", attempt_id="a", backend=backend, timeout=10, store=store)
-    assert result["exit_code"] == 0
+    result = runtime.run_hermes("ags_140", "child", execution_id="e", attempt_id="a", backend=backend, timeout=30, store=store)
+    assert result["exit_code"] == 0, result
     for name in ("child.pid", "grandchild.pid"):
         pid = int((store.paths("e", "a") / name).read_text())
         try:

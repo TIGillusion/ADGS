@@ -270,14 +270,13 @@ class NODE:
                 raise RuntimeError("同一个执行实例已在运行，不能重复写入会话")
             _ACTIVE_EXECUTIONS[self._execution_id] = self._cancel
         try:
-            budget, _ = self._compute_timeouts(task_md, timeout)
-            self._deadline = time.monotonic() + budget
+            self._deadline = float("inf")
             node = self.reg.get(self.node_id)
             self._score_base = float(node.score) if node else 50.0
             execution_store.put(self._execution_id, node_id=self.node_id, profile=self.profile,
                                 task_id=self._work_task_id, run_id=run_id, task_md=task_md,
                                 workspace=self._workspace, session_name=self._session_name, state="running", phase="decision",
-                                deadline_at=time.time() + budget, decision_pending=True, depth=depth)
+                                deadline_at=None, decision_pending=True, depth=depth)
         except BaseException:
             # work()/continue_execution() enter their cleanup only AFTER this
             # preparation. A failed checkpoint must not keep a phantom owner.
@@ -494,10 +493,16 @@ class NODE:
         if all(c.get("success") for c in children) and (previous.get("evaluation") or {}).get("failed_items"):
             repair = saved["task_md"] + "\n\n## 已完成成果（保留，禁止重做）\n" + self._summarize_children(children)
             repair += "\n\n## 仅补齐总体验收缺项\n" + json.dumps(previous["evaluation"]["failed_items"], ensure_ascii=False)
-            log = self._run_hermes(repair + "\n\n" + instruction)
-            result = self._complete_execution(saved["task_md"], log, "ceo", True)
-            result["children"] = children
-            return result
+            repair_task = {"name": "补齐总体验收缺项", "goal": repair + "\n\n" + instruction,
+                           "requirements": ["保留既有成果，仅补齐列明的验收缺项"],
+                           "acceptance_criteria": previous["evaluation"]["failed_items"]}
+            repair_result = self._delegate({"subtasks": [repair_task]}, saved["task_md"],
+                                           "ceo", None, saved.get("depth", 0))
+            new_children = repair_result.get("children") or [{
+                "success": False, "unjudged": True, "task_md": repair,
+                "error": repair_result.get("error") or "补充任务未能派发"}]
+            children.extend(new_children)
+            tasks = list(tasks) + (repair_result.get("subtasks") or [repair_task])
         evaluation = self._evaluate_delegation_and_update(children, saved["task_md"])
         success = bool(evaluation.get("passed")) and not evaluation.get("unjudged")
         outcome = "passed" if success else ("unjudged" if evaluation.get("unjudged") else "failed")
@@ -525,7 +530,7 @@ class NODE:
         self.agent.append_history("user", "[原始任务合同]\n" + task_md)
         decision_args = {"context": context} if context else {}
         if isinstance(self.agent, AGENT):
-            decision_args["timeout"] = max(0, self._deadline - time.monotonic())
+            decision_args["timeout"] = min(config.worker_timeout, max(0, self._deadline - time.monotonic()))
         decision = self.agent.decide(task_md, **decision_args)
         bus.emit("node.brain", node=self.node_id, profile=self.profile, action=decision.get("action"),
                  detail=str(decision.get("reason") or decision.get("question") or decision.get("goal") or "")[:1000])
@@ -705,7 +710,7 @@ class NODE:
         mech = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
         review_input = str(output or "")[-9000:] + "\n\n【系统机械核验】\n" + mech
         budget = getattr(self, "_deadline", None)
-        remaining = max(120, int(budget - time.monotonic())) if budget else 600
+        remaining = min(600, max(120, budget - time.monotonic())) if budget else 600
         review = self.agent.evaluate(
             task_md, review_input, old_score=getattr(self, "_score_base", 50.0),
             context_brief=f"worker 自评申报: {self_reported or '缺失'}；{summary or ''}"[:1200],
@@ -907,7 +912,7 @@ class NODE:
             self.agent.compress_history_if_needed()
             eval_args = {"old_score": old_score, "context_brief": self.agent.history_brief()}
             if isinstance(self.agent, AGENT):
-                eval_args["timeout"] = max(0, self._deadline - time.monotonic())
+                eval_args["timeout"] = min(config.worker_timeout, max(0, self._deadline - time.monotonic()))
             evaluation = self.agent.evaluate(task_md, evidence, **eval_args)
             if evaluation.get("unjudged"):
                 result = self._unjudged(task_md, log, evaluation.get("outcome", "evaluation_unavailable"),
@@ -941,7 +946,7 @@ class NODE:
                 "session_id": log.get("session_id")}
 
     def _compute_timeouts(self, instruction: str, timeout: int):
-        """按任务书关键词放宽超时，返回 (timeout, inactivity)"""
+        """兼容历史预算并按任务书放宽无进展容忍；预算不再作为总时限。"""
         explicit = timeout is not None
         timeout = config.worker_timeout if timeout is None else timeout
         # 长任务自动放宽：任务书含长文/大规模生成关键词时，用更长超时
@@ -952,8 +957,7 @@ class NODE:
         if not explicit and any(k in (instruction or "") for k in long_keywords):
             timeout = max(timeout, getattr(config, "long_task_timeout", 7200))
             inactivity = max(inactivity, 2400)  # 长任务无活动容忍 40 分钟
-            print(f"[node:{self.node_id}] 检测到长任务关键词，超时放宽到 {timeout}s "
-                  f"(inactivity {inactivity}s)", flush=True)
+            print(f"[node:{self.node_id}] 检测到长任务关键词，无进展容忍 {inactivity}s；任务无总时限", flush=True)
         return timeout, inactivity
 
     def _worker_model(self) -> str:
@@ -992,13 +996,13 @@ class NODE:
         self._attempt_id = uuid.uuid4().hex
         bus.emit("node.status", node=self.node_id, profile=self.profile, status="waiting",
                  task=getattr(self, "_work_task_id", None), attempt_id=self._attempt_id, waiting_reason="执行并发槽")
-        if not _EXEC_SEM.acquire(timeout=remaining, cancel=getattr(self, "_cancel", None)):
-            return {"output": "", "exit_code": -1, "error": "等待并发槽时预算耗尽或取消",
+        if not _EXEC_SEM.acquire(cancel=getattr(self, "_cancel", None)):
+            return {"output": "", "exit_code": -1, "error": "等待执行名额已取消",
                     "session_id": session_id, "infra_failure": True,
                     'termination_reason':'cancelled' if getattr(self,'_cancel',None) and self._cancel.is_set() else 'wall_timeout'}
         with owned_execution_slot(self._execution_id, _EXEC_SEM,
                                   getattr(self, '_deadline', time.monotonic()+budget), getattr(self, '_cancel', None)):
-            remaining = max(0, getattr(self, "_deadline", time.monotonic() + budget) - time.monotonic())
+            remaining = max(0, getattr(self, "_deadline", float("inf")) - time.monotonic())
             if remaining <= 0:
                 return {"output": "", "exit_code": -1, "error": "任务总预算耗尽",
                         "session_id": session_id, "infra_failure": True, 'termination_reason':'wall_timeout'}
@@ -1017,7 +1021,7 @@ class NODE:
             bus.emit("hermes.start", node=self.node_id, profile=self.profile, phase=phase,
                      attempt_id=self._attempt_id)
             kwargs = dict(model=self._worker_model(), live_log=live_log,
-                          timeout=remaining, inactivity_timeout=inactivity, cwd=self._workspace,
+                          timeout=None, inactivity_timeout=inactivity, cwd=self._workspace,
                           execution_id=self._execution_id, attempt_id=self._attempt_id,
                           task_id=self._work_task_id, run_id=self._run_id, cancel=self._cancel)
             result = self.hermes.resume(instruction, session_id, **kwargs) if session_id else self.hermes.execute(instruction, **kwargs)
@@ -1255,7 +1259,7 @@ class NODE:
                 "evaluation": c.get("evaluation"), "success": c.get("success"),
                 "work_log": evidence_excerpt(c.get("work_log", ""), 5000)} for c in children], ensure_ascii=False)
             eval_res = self.agent.evaluate(task_md, evidence, old_score=getattr(self, "_score_base", node.score),
-                                          timeout=max(0, self._deadline - time.monotonic()))
+                                          timeout=min(config.worker_timeout, max(0, self._deadline - time.monotonic())))
         if not eval_res.get("unjudged"):
             self._update_node(eval_res.get("passed", False), eval_res.get("score", node.score))
             eval_res["score"] = self.reg.get(self.node_id).score
@@ -1284,6 +1288,7 @@ class NODE:
             claims = write_resources(child, ws)
             if any(not any(c == p or c.startswith(p + "/") for p in parent_resources) for c in claims):
                 return self._unjudged(task_md, {}, "protocol_error", "子任务写路径超出上层权限")
+        execution_store.put(self._execution_id, coordinator=True, phase="coordinating")
         bus.emit("node.status", node=self.node_id, profile=self.profile, status="delegating",
                  task=self._work_task_id)
         overall = decision.get("overall_goal") or self._extract_overall(task_md)

@@ -227,6 +227,14 @@ def api_state():
     selected = request.args.get("session")
     meta = project_catalog.session(selected) if selected else None
     pending = _queue_snapshot(selected)
+    owner = selected or _current_sess.get("name")
+    ceo_state = getattr(_session_ceos.get(owner), "_states", {}).get(owner, {})
+    if owner and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", owner) and not ceo_state:
+        try:
+            ceo_state = json.loads((config.DATA_DIR / "sessions" / (owner + ".json")).read_text(
+                encoding="utf-8")).get("session_state") or {}
+        except (OSError, ValueError):
+            pass
     return jsonify({
         "ok": True,
         "workspace": meta["workspace"] if meta else config.workspace,
@@ -243,6 +251,7 @@ def api_state():
         "nodes": nodes,
         "events": [_display_event(e) for e in bus.history(1500) if not selected or e.get("session") == selected],
         "event_id": bus.last_id,
+        "ceo_execution_id": ceo_state.get("_hermes_execution_id"),
         "busy": _session_busy(selected) if selected else _busy["state"],
         "worker_hold": worker_launch_on_hold(),
         "mesh": _mesh_status,
@@ -405,7 +414,7 @@ def api_settings_set():
     if "max_workers" in changed_r:
         parts.append(f"并行上限 → {changed_r['max_workers']}（立即生效）")
     for label, key in (("委派深度", "max_delegation_depth"),
-                       ("任务超时", "worker_timeout"),
+                       ("模型请求预算", "worker_timeout"),
                        ("无活动超时", "inactivity_timeout")):
         if key in changed_r:
             parts.append(f"{label} → {changed_r[key]}s" if "超时" in label
@@ -614,6 +623,14 @@ def _mesh_delegate_impl(child_node_id: str, task_md: str, parent_execution_id: s
              status="running", summary=task_md, session=parent.get("session_name"))
     _persist_delegations()
     try:
+        execution_store.put(parent_execution_id, coordinator=True, phase="coordinating")
+        if not parent.get("coordinator"):
+            bus.emit("node.brain", node=parent.get("node_id"), execution_id=parent_execution_id,
+                     action="coordinating", detail="已转为协调者，业务代码交给下属执行",
+                     session=parent.get("session_name"))
+        if parent.get("attempt_id"):
+            from core.terminal_runtime import terminal_store
+            terminal_store.paths(parent_execution_id, parent["attempt_id"]).joinpath("coordinator.flag").touch()
         _MESH_POOL.submit(_mesh_run_child, delegation_id, child_node_id, task_md, parent_execution_id)
     except Exception as exc:
         with _mesh_lock:
@@ -854,16 +871,18 @@ def _mesh_probe_impl(node_id: str, parent_execution_id: str = "") -> dict:
             rows = conn.execute("""
                 SELECT json_extract(payload,'$.task_id'), json_extract(payload,'$.state'),
                        json_extract(payload,'$.result.evaluation.detail'),
-                       json_extract(payload,'$.ended_at'), json_extract(payload,'$.updated_at')
+                       json_extract(payload,'$.ended_at'), json_extract(payload,'$.updated_at'),
+                       json_extract(payload,'$.execution_id')
                 FROM executions WHERE json_extract(payload,'$.node_id')=?
                 ORDER BY json_extract(payload,'$.updated_at') DESC LIMIT 12
             """, (node_id,)).fetchall()
         finally:
             conn.close()
-        for task_id, state, detail, ended, updated in rows:
+        from core.node import active_cancel
+        for task_id, state, detail, ended, updated, execution_id in rows:
             if state == "running":
                 # runtime 重启可能留下僵尸 running：只有近期仍有活动的才算真忙
-                if _time.time() - float(updated or 0) < config.worker_timeout:
+                if active_cancel(execution_id) is not None:
                     running_now += 1
                 continue
             if len(recent) < 5:
@@ -1005,13 +1024,11 @@ def _mesh_run_child(delegation_id, child_node_id, task_md, parent_execution_id):
     try:
         parent = execution_store.get(parent_execution_id) or {}
         parent_depth = int(parent.get("depth", 0))
-        parent_deadline = float(parent.get("deadline_at") or 0)
-        budget = max(60, int(parent_deadline - time.time())) if parent_deadline else config.worker_timeout
         from core.node import NODE, active_cancel
         with session_scope(parent.get("session_name"), parent.get("workspace")), event_scope(session=parent.get("session_name")):
             result = NODE(child_node_id).work(
                 task_md, upper=record.get("parent_node_id", "mesh"),
-                timeout=min(budget, config.worker_timeout), depth=parent_depth + 1,
+                timeout=None, depth=parent_depth + 1,
                 task_id=f"mesh_{delegation_id[:8]}", execution_id=record.get("child_execution_id"),
                 run_id=parent.get("run_id"),
                 parent_cancel=active_cancel(parent_execution_id),
@@ -1423,6 +1440,7 @@ def _start_task(text: str, sess_name=None, workspace=None, mode="queue", *, allo
                 # 队列提取与 busy 切换保持在同一任务锁内，避免双 runner。
                 _running_sessions.pop(session, None)
                 _run_stop_events.pop(session, None)
+                _busy["state"] = bool(_running_sessions)
                 states = getattr(ceo, "_states", {}) if ceo is not None else {}
                 awaiting_input = bool(states.get(session, {}).get("_awaiting_input"))
                 with _queue_lock:

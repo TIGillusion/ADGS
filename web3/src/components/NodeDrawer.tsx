@@ -809,16 +809,17 @@ function TaskDetail({ nodeKey }: { nodeKey: string }) {
 
 export function NodeDrawer() {
   const selectedInst = useAppState((s) => s.selectedInst);
+  const ceoExecution = useAppState((s) => s.snap?.ceo_execution_id);
   const graph = useAppState((s) => displayGraph(s.graph));
   if (!selectedInst) return null;
   const inGraph = graph.nodes.find((n) => n.key === selectedInst);
   // 实例键（node@task）或不在图谱中的裸节点 id → 节点档案视图
   const isInstance = inGraph == null || inGraph.type === "node";
   const { nodeId } = splitInstKey(selectedInst);
-  const executionId = inGraph?.extra.execution_id;
+  const executionId = selectedInst === "ceo" ? ceoExecution : inGraph?.extra.execution_id;
   return (
     <ResizableDrawerFrame key={executionId ? "execution" : "node"} defaultWidth={executionId ? 860 : 440}>
-      {executionId ? <ExecutionMonitor key={executionId} executionId={executionId} nodeId={nodeId} profile={<InstanceDetail key={selectedInst} nodeId={nodeId} instKey={selectedInst} hideLogs />} /> : isInstance ? (
+      {executionId ? <ExecutionMonitor key={executionId} executionId={executionId} nodeId={nodeId} profile={selectedInst === "ceo" ? <div className="p-4">固定 CEO · Hermes<br />模型可在系统设置中调整。</div> : <InstanceDetail key={selectedInst} nodeId={nodeId} instKey={selectedInst} hideLogs />} /> : isInstance ? (
         <InstanceDetail key={selectedInst} nodeId={nodeId} instKey={selectedInst} />
       ) : (
         <TaskDetail key={selectedInst} nodeKey={selectedInst} />

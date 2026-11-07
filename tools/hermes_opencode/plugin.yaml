@@ -1,0 +1,5 @@
+name: opencode-provider
+kind: model-provider
+version: 1.0.0
+description: OpenCode local (ADGS internal endpoint, real opencode path)
+author: ADGS

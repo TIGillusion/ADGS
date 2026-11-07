@@ -232,7 +232,7 @@ export function GraphView({ embedded }: { embedded?: boolean }) {
       handlers: {
         onSelect: (key) => {
           if (key === null) store.selectInst(null);
-          else if (key === "ceo") store.selectInst(null);
+          else if (key === "ceo") store.selectInst("ceo");
           else store.selectInst(key);
         },
         onHover: (key, x, y) => setHover(key ? { key, x, y } : null),
