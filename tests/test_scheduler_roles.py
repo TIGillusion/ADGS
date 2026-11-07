@@ -115,3 +115,21 @@ def test_resumed_coordinator_delegates_acceptance_repairs(tmp_path, monkeypatch)
     assert result["success"]
     assert len(result["children"]) == len(result["subtasks"]) == 2
     assert "missing aggregate report" in repairs[0]["subtasks"][0]["goal"]
+
+
+def test_historical_mesh_parents_restore_coordinator_role(tmp_path, monkeypatch):
+    import json
+    import web_app as web
+    from core.execution_store import ExecutionStore
+    store = ExecutionStore(tmp_path / "executions.sqlite")
+    store.put("old-parent", state="failed", phase="acceptance")
+    store.put("leaf", state="passed")
+    records = tmp_path / "delegations.json"
+    records.write_text(json.dumps({"old": {"parent_execution_id": "old-parent"}}), encoding="utf-8")
+    monkeypatch.setattr(web, "execution_store", store)
+    monkeypatch.setattr(web, "_mesh_delegations_file", lambda: records)
+    monkeypatch.setattr(web, "_mesh_delegations", {})
+    web._load_delegations()
+    assert store.get("old-parent")["coordinator"]
+    assert store.get("old-parent")["phase"] == "acceptance"
+    assert "coordinator" not in store.get("leaf")

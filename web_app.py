@@ -545,6 +545,12 @@ def _load_delegations():
             data = json.loads(f.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 _mesh_delegations.update(data)
+                # Old executions delegated before coordinator markers existed.
+                parents = {r.get("parent_execution_id") for r in data.values() if isinstance(r, dict)}
+                for parent_id in parents - {None, ""}:
+                    saved = execution_store.get(parent_id)
+                    if saved and not saved.get("coordinator"):
+                        execution_store.put(parent_id, coordinator=True)
     except (OSError, ValueError):
         pass
 
