@@ -61,7 +61,7 @@ test("详情等待状态与图谱一致，快照补回完成结果",async({page}
   await page.route("**/api/executions/e1",route=>route.fulfill({json:{ok:true,execution:{execution_id:"e1",node_id:"a",profile:"a",task_id:"t1",run_id:"r",state:"running",phase:"execute",runtime_active:true,waiting_for_children:true,attempts:[],events:[]}}}));
   await event(page,"node.status",{node:"a",execution_id:"e1",status:"delegating"});
   await page.evaluate(()=>window.__adgs_store!.selectInst("a@e1"));
-  await expect(page.locator(".execution-state")).toHaveText("等待下属");
+  await expect(page.locator(".execution-state")).toHaveText("等待下属汇报");
   await page.keyboard.press("Escape");
   await page.route("**/api/state*",async route=>{
     const result=await route.fetch();

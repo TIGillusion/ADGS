@@ -34,7 +34,7 @@ export const GRAPH_STATUS: Record<GraphNodeStatus,{label:string;color:string;ton
   idle:{label:"待命",color:"--canvas-idle",tone:"dim"},
   waiting:{label:"排队",color:"--canvas-waiting",tone:"warn"},
   running:{label:"执行中",color:"--canvas-running",tone:"life"},
-  delegating:{label:"等待下属",color:"--canvas-delegating",tone:"gene"},
+  delegating:{label:"协调下属",color:"--canvas-delegating",tone:"gene"},
   evaluating:{label:"验收中",color:"--canvas-evaluating",tone:"pulse"},
   waiting_user:{label:"等待补充",color:"--canvas-waiting",tone:"warn"},
   done:{label:"完成",color:"--canvas-done",tone:"ok"},
@@ -46,3 +46,8 @@ export const GRAPH_STATUS: Record<GraphNodeStatus,{label:string;color:string;ton
 };
 
 export const activeGraphStatus = (status: GraphNodeStatus) => ["waiting","running","delegating","evaluating"].includes(status);
+
+export function executionStatusLabel(execution: Pick<ExecutionDetail,"state"|"phase"|"waiting_for_children"|"waiting_for_slot"|"runtime_active">) {
+  const status=executionGraphStatus(execution);
+  return status==="delegating" && execution.waiting_for_children ? "等待下属汇报" : GRAPH_STATUS[status].label;
+}

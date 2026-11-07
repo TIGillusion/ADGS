@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyEventToGraph, graphInit } from "@/lib/graph";
 import { displayGraph } from "@/lib/graphFlow";
 import { edgeSignal } from "@/lib/graphActivity";
-import { executionGraphStatus } from "@/lib/executionState";
+import { executionGraphStatus, executionStatusLabel } from "@/lib/executionState";
 
 const dispatch = () => applyEventToGraph(graphInit(),{id:1,type:"graph.dispatch",ts:100,data:{node:"a",execution_id:"e",task_id:"t",parent:"ceo"}},100000);
 describe("消息流动与执行状态相互独立",()=>{
@@ -28,6 +28,11 @@ describe("消息流动与执行状态相互独立",()=>{
   });
 });
 describe("运行时检查点语义",()=>{
+  it("协调角色本身不等于正在等待，详情按真实等待事实补充文案",()=>{
+    const coordinator={state:"running",phase:"coordinating",runtime_active:true};
+    expect(executionStatusLabel(coordinator)).toBe("协调下属");
+    expect(executionStatusLabel({...coordinator,waiting_for_children:true})).toBe("等待下属汇报");
+  });
   it.each([
     [{state:"running",phase:"queued",runtime_active:true},"waiting"],
     [{state:"running",phase:"execute",runtime_active:true,waiting_for_children:true},"delegating"],

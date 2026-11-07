@@ -1,4 +1,4 @@
-import { executionGraphStatus, GRAPH_STATUS } from "@/lib/executionState";
+import { executionGraphStatus, executionStatusLabel } from "@/lib/executionState";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ArrowDown, CheckCircle2, Copy, Download, Maximize2, Minus, Plus, Search, Terminal as TerminalIcon, X } from "lucide-react";
 import type { Terminal } from "@xterm/xterm";
@@ -237,7 +237,7 @@ export function ExecutionMonitor({ executionId, nodeId, profile, coordinator }: 
     : description.startsWith("executing ") || description.startsWith("sequential tool running") ? "工具正在执行"
     : description;
   return <div className={`execution-monitor ${expanded ? "is-expanded" : ""}`}>
-    <header className="execution-header"><div className="min-w-0"><div className="flex items-center gap-2"><TerminalIcon size={16} className="text-life-400" /><strong>{nodeIdLabel(nodeId)}</strong><span className={`execution-state state-${state}`}>{coordinator ? ceoPhaseLabel(coordinator) : GRAPH_STATUS[state].label}</span></div><div className="num execution-id" title={executionId}>{executionId}</div></div>
+    <header className="execution-header"><div className="min-w-0"><div className="flex items-center gap-2"><TerminalIcon size={16} className="text-life-400" /><strong>{nodeIdLabel(nodeId)}</strong><span className={`execution-state state-${state}`}>{coordinator ? ceoPhaseLabel(coordinator) : execution ? executionStatusLabel(execution) : "待核实"}</span></div><div className="num execution-id" title={executionId}>{executionId}</div></div>
       <div className="flex gap-1"><button aria-label={expanded ? "收起执行面板" : "展开执行面板"} onClick={() => setExpanded((v) => !v)}><Maximize2 size={16} /></button><button aria-label="关闭" onClick={() => store.selectInst(null)}><X size={17} /></button></div>
     </header>
     {coordinator && <div className="execution-meta"><span>固定 CEO · Hermes · 只负责协调</span><b>{ceoPhaseLabel(coordinator)}</b></div>}
