@@ -81,3 +81,31 @@ def test_closed_waiter_never_publishes_a_false_running_status(monkeypatch):
         with lend_execution_slot('parent'):
             slot.close()
     assert states == ['delegating']
+
+
+def test_merged_worker_publishes_acceptance_before_independent_review(tmp_path, monkeypatch):
+    from core import node as module
+    from types import SimpleNamespace
+
+    store = ExecutionStore(tmp_path / 'executions.sqlite')
+    store.put('merged', node_id='ags_1', state='running', phase='execute')
+    events = []
+    monkeypatch.setattr(module, 'execution_store', store)
+    monkeypatch.setattr(module.bus, 'emit', lambda event, **fields: events.append((event, fields)))
+    worker = module.NODE.__new__(module.NODE)
+    worker.node_id = worker.profile = 'ags_1'
+    worker._execution_id = 'merged'
+    worker._work_task_id = 'task-a'
+    worker._pending_children_result = lambda *a: None
+    worker._mechanical_evidence = lambda *a: ''
+
+    def review(*args, **kwargs):
+        assert store.get('merged')['phase'] == 'acceptance'
+        assert events[-1][0] == 'node.status'
+        assert events[-1][1]['status'] == 'evaluating'
+        assert events[-1][1]['execution_id'] == 'merged'
+        return {'passed': True, 'score': 70}
+
+    worker.agent = SimpleNamespace(evaluate=review)
+    result = worker._independent_acceptance('contract', 'finished report', 'passed', 'done')
+    assert result['passed'] is True

@@ -15,6 +15,7 @@ import queue
 import sys
 import tempfile
 from pathlib import Path
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -27,6 +28,16 @@ from config.config import config
 from web.event_bus import bus
 
 ID = "t_node"
+
+
+@pytest.fixture(autouse=True)
+def isolated_legacy_runtime(tmp_path, monkeypatch):
+    from core.execution_store import ExecutionStore
+    # These cases exercise the decision/evaluation path, independent of the
+    # installation's current merged-brain setting and persistent executions.
+    monkeypatch.setattr(config, "node_merged_brain", False)
+    monkeypatch.setattr(node_mod, "execution_store", ExecutionStore(tmp_path / "executions.sqlite"))
+    monkeypatch.setattr(node_mod.NODE, "_schedule_maintenance", lambda *a, **k: None)
 
 
 class FakeNode:

@@ -808,6 +808,15 @@ class NODE:
         bus.emit("node.eval", node=self.node_id, profile=self.profile, **result["evaluation"])
         return result
 
+    def _mark_acceptance(self):
+        """Persist and publish review before the evaluator can block on a model."""
+        execution_id = getattr(self, "_execution_id", None)
+        if execution_id:
+            execution_store.put(execution_id, phase="acceptance")
+            bus.emit("node.status", node=self.node_id, profile=self.profile,
+                     execution_id=execution_id, task=getattr(self, "_work_task_id", None),
+                     status="evaluating")
+
     def _independent_acceptance(self, task_md: str, output: str,
                                 self_reported, summary, session_id=None) -> dict:
         """独立验收（merged 模式）：申报≠验收，验收权在 AGENT 复核层。
@@ -819,6 +828,7 @@ class NODE:
         pending = self._pending_children_result(task_md, {"output": output, "session_id": session_id})
         if pending:
             return {"unjudged_result": pending}
+        self._mark_acceptance()
         mech = self._mechanical_evidence(task_md, getattr(self, "_workspace", None))
         missing = [line[2:] for line in mech.splitlines() if line.startswith(("- 缺失: ", "- 不合格: "))]
         review_input = (str(output or "")[-9000:] + "\n\n【系统机械核验】\n本执行工作区：" +
@@ -1025,8 +1035,7 @@ class NODE:
             pending = self._pending_children_result(task_md, log)
             if pending:
                 return pending
-            if hasattr(self, "_execution_id"):
-                execution_store.put(self._execution_id, phase="acceptance")
+            self._mark_acceptance()
             self.agent.append_history("user", "[执行证据]\n" + evidence_excerpt(evidence, 5000))
             self.agent.compress_history_if_needed()
             eval_args = {"old_score": old_score, "context_brief": self.agent.history_brief()}
@@ -1382,7 +1391,7 @@ class NODE:
             return {}
         eval_res = self._evaluate_delegation(children, getattr(self, "_score_base", node.score))
         if task_md and not eval_res.get("unjudged") and isinstance(self.agent, AGENT):
-            execution_store.put(self._execution_id, phase="acceptance")
+            self._mark_acceptance()
             evidence = json.dumps([{"name": c.get("name"), "task_md": c.get("task_md"),
                 "evaluation": c.get("evaluation"), "success": c.get("success"),
                 "work_log": evidence_excerpt(c.get("work_log", ""), 5000)} for c in children], ensure_ascii=False)
