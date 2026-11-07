@@ -33,11 +33,51 @@ def test_continue_keeps_execution_session_and_previous_result(mesh):
     assert record['previous_results'][0]['summary']=='old result'
     assert record['previous_results'][0]['verdict']=={'passed':True}
     assert record['parent_round_id']=='parent-round' and record['batch_id']!='old-batch'
+    assert store.get('parent')['pending_delegation_reviews']==['delegation']
     assert submitted[0][1]=={'resume_instruction':'fix two concrete gaps'}
     assert events[0][1]['context_mode']=='continue'
     assert store.get('child')['session_id']=='original-hermes'
     assert not web._mesh_continue_impl('parent','delegation','duplicate')['ok']
     assert len(submitted)==1
+
+
+def test_parent_review_obligation_survives_restart_and_clears_only_on_verdict(mesh,monkeypatch):
+    web,store,record,submitted,_=mesh
+    assert web._mesh_continue_impl('parent','delegation','repair')['ok']
+    record['status']='passed'
+    web._persist_delegations()
+    store.put('parent',pending_delegation_reviews=[])
+    web._mesh_delegations.clear();web._load_delegations()
+    assert store.get('parent')['pending_delegation_reviews']==['delegation']
+    # Avoid population score mutations; only exercise the real obligation state.
+    import core.node as nodes
+    monkeypatch.setattr(nodes,'NODE',lambda _:SimpleNamespace(reg=SimpleNamespace(get=lambda _:SimpleNamespace(score=50)),_update_node=lambda *a:None))
+    assert web._mesh_verdict_impl('delegation',True,'read the repaired report',0)['ok']
+    assert store.get('parent')['pending_delegation_reviews']==[]
+    assert web._mesh_continue_impl('parent','delegation','second repair')['ok']
+    assert store.get('parent')['pending_delegation_reviews']==['delegation']
+
+
+def test_continued_wait_reports_current_round_elapsed_not_lifetime(mesh,monkeypatch):
+    web,_,record,_,_=mesh
+    monkeypatch.setattr(web.time,'time',lambda:10000)
+    assert web._mesh_continue_impl('parent','delegation','repair')['ok']
+    monkeypatch.setattr(web.time,'time',lambda:10007)
+    assert web._mesh_wait_impl('delegation',0)['elapsed']==7
+
+
+def test_parallel_continuations_keep_both_review_obligations(mesh,monkeypatch):
+    web,store,record,_,_=mesh
+    import core.node as nodes
+    store.put('second-child',**{k:v for k,v in store.get('child').items() if k!='execution_id'})
+    web._mesh_delegations['second']={**record,'delegation_id':'second','child_execution_id':'second-child'}
+    assert web._mesh_continue_impl('parent','delegation','first repair')['ok']
+    assert web._mesh_continue_impl('parent','second','parallel repair')['ok']
+    assert store.get('parent')['pending_delegation_reviews']==['delegation','second']
+    record['status']='passed'
+    monkeypatch.setattr(nodes,'NODE',lambda _:SimpleNamespace(reg=SimpleNamespace(get=lambda _:SimpleNamespace(score=50)),_update_node=lambda *a:None))
+    assert web._mesh_verdict_impl('delegation',True,'review first only',0)['ok']
+    assert store.get('parent')['pending_delegation_reviews']==['second']
 
 
 def test_foreign_parent_or_missing_context_cannot_replace_session(mesh):

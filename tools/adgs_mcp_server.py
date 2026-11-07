@@ -195,7 +195,7 @@ def wait_delegation(delegation_id: str, timeout_s: int = 120) -> str:
     status = data.get("status", "running")
     if status == "running":
         elapsed = int(data.get("elapsed", 0))
-        return (f"委派 {delegation_id} 仍在执行（已 {elapsed}s，节点 {data.get('child_node_id')}）。"
+        return (f"委派 {delegation_id} 仍在执行（本轮派发至今 {elapsed}s，节点 {data.get('child_node_id')}）。"
                 f"可继续 wait_delegation，或先处理其他事务。")
     parts = [f"委派 {delegation_id} 已结束，状态：{status}（节点 {data.get('child_node_id')}）。"]
     if data.get("summary"):

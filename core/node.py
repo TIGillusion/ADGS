@@ -759,10 +759,16 @@ class NODE:
     def _pending_children_result(self, task_md, log):
         pending = [c["execution_id"] for c in execution_store.children(getattr(self, "_execution_id", ""))
                    if c.get("state") in {"running", "queued"}]
-        if not pending:
+        saved = execution_store.get(getattr(self, "_execution_id", "")) or {}
+        reviews = saved.get("pending_delegation_reviews") or []
+        if not pending and not reviews:
             return None
+        reason = ("下属仍在执行或排队：" + ", ".join(pending) + "。" if pending else "")
+        if reviews:
+            reason += "下属委派尚未由负责人复核：" + ", ".join(reviews) + "。"
         result = self._unjudged(task_md, log, "unjudged",
-            "协调者进程已返回，但下属仍在执行或排队，尚不能验收完成。请续接原父会话等待汇报并复核，不要取消或重派下属：" + ", ".join(pending))
+            "协调者进程已返回，尚不能验收完成。" + reason +
+            "请续接原父会话，wait_delegation 获取汇报后调用 report_delegation_verdict，再完成剩余任务；不要取消或重派下属。")
         result["infra_failure"] = False
         return result
 

@@ -44,3 +44,14 @@ def test_unjudged_result_preserves_own_confirmed_resume_session(tmp_path,monkeyp
     result=n._save_result({'success':False,'outcome':'unjudged','unjudged':True})
     assert result['hermes_session_id']=='confirmed-context'
     assert store.get('parent')['session_id']=='confirmed-context'
+
+
+def test_finished_child_still_requires_current_parent_review(tmp_path,monkeypatch):
+    n,store,scores=node_fixture(tmp_path,monkeypatch)
+    store.put('child',parent_execution_id='parent',state='passed')
+    store.put('parent',pending_delegation_reviews=['continued-child'])
+    result=n._complete_execution('updated contract',{'exit_code':0,'session_id':'same-context'},'ceo',True)
+    assert result['unjudged'] and not result['infra_failure'] and not scores
+    assert 'continued-child' in result['error'] and 'report_delegation_verdict' in result['error']
+    store.put('parent',pending_delegation_reviews=[])
+    assert n._pending_children_result('updated contract',{}) is None

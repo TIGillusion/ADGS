@@ -65,11 +65,18 @@ def test_cancelled_parent_does_not_leak_or_steal_child_slot():
     sem.release();assert sem._held==0
 
 
-def test_reacquire_budget_exhaustion_cancels_parent_without_releasing_child():
+def test_reacquire_ignores_old_wall_deadline_until_operator_cancels():
     sem=DynamicSemaphore(1);sem.acquire();cancel=threading.Event()
     slot=ExecutionSlot(sem,time.monotonic()+.03,cancel)
-    with pytest.raises(TimeoutError):
-        with slot.lend():assert sem.acquire(timeout=.5)
+    started=time.monotonic()
+    timer=threading.Timer(.15,cancel.set)
+    timer.start()
+    try:
+        with pytest.raises(TimeoutError,match='取消'):
+            with slot.lend():assert sem.acquire(timeout=.5)
+    finally:
+        timer.cancel();timer.join()
+    assert time.monotonic()-started>=.12
     slot.close();assert cancel.is_set() and sem._held==1
     sem.release()
 
@@ -106,10 +113,13 @@ def test_nonblocking_or_completed_poll_does_not_lend_parent_slot(monkeypatch):
 
 
 @pytest.fixture
-def mesh(monkeypatch):
+def mesh(monkeypatch,tmp_path):
     import web_app as web
+    from core.execution_store import ExecutionStore
+    store=ExecutionStore(tmp_path/'executions.sqlite')
+    store.put('parent',node_id='same-role',depth=0,deadline_at=time.time()+30)
     monkeypatch.setattr(web,'registry',SimpleNamespace(get=lambda nid:object()))
-    monkeypatch.setattr(web.execution_store,'get',lambda eid:{'node_id':'same-role','depth':0,'deadline_at':time.time()+30})
+    monkeypatch.setattr(web,'execution_store',store)
     monkeypatch.setattr(web,'_mesh_delegations',{})
     monkeypatch.setattr(web,'_persist_delegations',lambda:None)
     monkeypatch.setattr(web.bus,'emit',lambda *a,**kw:None)

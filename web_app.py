@@ -578,8 +578,11 @@ def _load_delegations():
                 parents = {r.get("parent_execution_id") for r in data.values() if isinstance(r, dict)}
                 for parent_id in parents - {None, ""}:
                     saved = execution_store.get(parent_id)
-                    if saved and not saved.get("coordinator"):
-                        execution_store.put(parent_id, coordinator=True)
+                    if saved:
+                        pending = sorted(did for did, r in data.items() if isinstance(r, dict)
+                                         and r.get("parent_execution_id") == parent_id
+                                         and r.get("child_execution_id") and not r.get("verdict"))
+                        execution_store.put(parent_id, coordinator=True, pending_delegation_reviews=pending)
                 if changed:
                     _persist_delegations()
     except (OSError, ValueError):
@@ -601,6 +604,19 @@ def _persist_delegations():
 from core.delegation_runtime import DelegationThreads, lend_execution_slot
 _MESH_POOL = DelegationThreads()
 from core.execution_store import execution_store  # A2A 委派端点：继承父深度/预算/工作区
+
+
+def _mesh_review_pending(parent_id, delegation_id, pending):
+    """Called under _mesh_lock so parallel completions cannot lose obligations."""
+    saved = execution_store.get(parent_id)
+    if not saved:
+        return
+    reviews = set(saved.get("pending_delegation_reviews") or [])
+    if pending:
+        reviews.add(delegation_id)
+    else:
+        reviews.discard(delegation_id)
+    execution_store.put(parent_id, pending_delegation_reviews=sorted(reviews))
 
 
 # ---- A2A 委派核心逻辑（Flask 内部端点与 MCP provider 共用；无 request 依赖） ----
@@ -653,6 +669,7 @@ def _mesh_delegate_impl(child_node_id: str, task_md: str, parent_execution_id: s
             "shared_resources": sorted(resources),
             "created_at": time.time(), "summary": "", "deliverables": [], "verdict": None,
         }
+        _mesh_review_pending(parent_execution_id, delegation_id, True)
     bus.emit("a2a.delegate", delegation_id=delegation_id, node=child_node_id,
              parent=parent.get("node_id"), parent_execution_id=parent_execution_id,
              child_execution_id=child_execution_id, batch_id=batch_id, parent_round_id=parent_round_id,
@@ -721,7 +738,8 @@ def _mesh_continue_impl(parent_execution_id: str, delegation_id: str, instructio
         record.setdefault("previous_results", []).append({k: record.get(k) for k in ("status", "summary", "verdict", "ended_at", "batch_id", "last_instruction")})
         record.update(status="running", summary="", deliverables=[], verdict=None, ended_at=None,
                       last_instruction=instruction, resume_count=record.get("resume_count", 0)+1,
-                      batch_id=batch_id, parent_round_id=round_id)
+                      batch_id=batch_id, parent_round_id=round_id, resumed_at=time.time())
+        _mesh_review_pending(parent_execution_id, delegation_id, True)
     _persist_delegations()
     bus.emit("a2a.delegate", delegation_id=delegation_id, node=record["child_node_id"], parent=parent.get("node_id"),
              parent_execution_id=parent_execution_id, child_execution_id=eid, batch_id=batch_id,
@@ -760,7 +778,7 @@ def _mesh_wait_impl(delegation_id: str, wait: float) -> dict:
                 result = {"ok": True, **{k: record.get(k) for k in
                           ("delegation_id", "child_node_id", "parent_node_id", "status",
                            "summary", "deliverables", "verdict")},
-                          "elapsed": int(time.time() - record["created_at"])}
+                          "elapsed": int(time.time() - (record.get("resumed_at") or record["created_at"]))}
         return result
     except TimeoutError as exc:
         return {'ok':False,'error':str(exc)}
@@ -784,6 +802,7 @@ def _mesh_verdict_impl(delegation_id: str, passed: bool, note: str, score=None) 
             return {"ok": False, "error": "委派尚未结束，先 wait_delegation"}
         record["verdict"] = {"passed": passed, "note": note, "score": raw, "at": time.time()}
         child_node_id = record["child_node_id"]
+        _mesh_review_pending(record.get("parent_execution_id"), delegation_id, False)
     _persist_delegations()
     # 直系上级的最终打分（覆盖自评预打分）：score(-10~+10)×delta_coef，缺省 ±10
     raw_effective = raw if raw is not None else (10.0 if passed else -10.0)
