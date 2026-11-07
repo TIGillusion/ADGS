@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 
 
-def install_role_tools():
+def install_role_tools(task_file=None):
     import model_tools
     from agent import tool_executor
     try:
@@ -19,6 +19,17 @@ def install_role_tools():
     coordinator_file = os.environ.get("ADGS_COORDINATOR_FLAG")
     schemas = json.loads(Path(schemas_file).read_text(encoding="utf-8")) if schemas_file else None
     names = {tool["function"]["name"] for tool in schemas} if schemas else set()
+    try:
+        from .contracts import read_file_only
+    except ImportError:
+        from contracts import read_file_only
+    only_read = bool(not schemas and task_file and read_file_only(Path(task_file).read_text(encoding="utf-8")))
+    if only_read:
+        original_definitions = model_tools.get_tool_definitions
+        def definitions(*args, **kwargs):
+            return [tool for tool in original_definitions(*args, **kwargs)
+                    if tool.get("function", {}).get("name") == "read_file"]
+        model_tools.get_tool_definitions = definitions
     if schemas:
         from tools.registry import registry
         for tool in schemas:
@@ -46,6 +57,9 @@ def install_role_tools():
 
     def dispatch(agent, state, ref, **kwargs):
         denied = bool(schemas and ref.name not in names)
+        if only_read and ref.name != "read_file":
+            kwargs["scope_block"] = kwargs.get("scope_block") or "本任务明确只允许 read_file；请读取指定文件并在对话中汇报，不调用其他工具。"
+            return original(agent, state, ref, **kwargs)
         if not schemas and coordinator_file and Path(coordinator_file).is_file():
             allowed = {"read_file", "search_files", "list_files", "tool_search", "tool_describe"}
             mesh = ("list_nodes", "probe_node", "delegate_to_node", "continue_delegation", "wait_delegation",

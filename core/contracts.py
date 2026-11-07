@@ -117,6 +117,23 @@ def delegation_restriction(task):
     return "本任务明确禁止继续委派子任务，请在当前执行中完成并汇报" if restricted else None
 
 
+def read_file_only(task):
+    """Honor an explicit single-tool contract without inferring broad permissions."""
+    task = str(task or "")
+    if task_section(task, "当前任务"):
+        task = "\n".join(task_section(task, title) for title in (
+            "当前任务", "需求明细", "权限告知", "上层补充要求（保留原权限）"))
+    task = re.sub(r"```[\s\S]*?```", "", task)
+    for clause in re.split(r"[。；;\n]", task):
+        if clause.lstrip().startswith(">"):
+            continue
+        clause = re.sub(r"^\s*(?:[-*]\s*|\d+[.)、]\s*)?", "", clause).strip()
+        match = re.match(r"(?:你|本任务|本节点)(?:只允许使用|只能使用|只能)\s*`?read_file`?(.*)$", clause)
+        if match and re.match(r"\s*(?:[，,]|读取|工具|$)", match[1]):
+            return True
+    return False
+
+
 def delegated_task_error(task):
     """A connectivity placeholder is not a contract for a new worker instance."""
     task = str(task or "").strip()

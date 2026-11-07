@@ -58,7 +58,8 @@ def main():
         install_openai_compat()
         if (source / "run_agent.py").is_file():
             from hermes_roles import install_role_tools
-            install_role_tools()
+            task_file = sys.argv[sys.argv.index("--query-file") + 1] if "--query-file" in sys.argv else None
+            install_role_tools(task_file=task_file)
         if "--resume" in sys.argv:
             from resume_projection import install_resume_projection
             install_resume_projection(Path(os.environ["ADGS_HERMES_RECEIPT"]).parent)
