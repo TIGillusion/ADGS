@@ -206,11 +206,10 @@
   --color-danger-500: #f4535f;
 
   /* ---- 字体 ---- */
-  --font-display: "Space Grotesk", "Noto Sans SC", system-ui, sans-serif;
-  --font-sans: "Noto Sans SC", "Space Grotesk", system-ui, -apple-system,
-    "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas,
-    monospace;
+  --font-display: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-mono: "Cascadia Code", Consolas, "SFMono-Regular", ui-monospace, monospace;
 
   /* ---- 圆角 / 阴影 ---- */
   --radius-card: 16px;
