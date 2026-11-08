@@ -173,7 +173,7 @@ def create_control_api(host):
     @api.get('')
     @api.get('/')
     def capabilities():
-        return jsonify(ok=True,version='1',capabilities=['projects','sessions','messages','queue','batch_guidance','pause','resume','executions','events','files','nodes','settings','models'],
+        return jsonify(ok=True,version='1',capabilities=['projects','sessions','messages','queue','batch_guidance','pause','resume','executions','events','files','nodes','settings','models','session_state','usage'],
                        endpoints=[{'path':str(rule),'methods':sorted(rule.methods-{'HEAD','OPTIONS'})} for rule in host.app.url_map.iter_rules() if str(rule).startswith('/api/v1')])
 
     @api.get('/health')
@@ -218,6 +218,56 @@ def create_control_api(host):
     def executions(session):
         session_path(session)
         return jsonify(ok=True,executions=summaries(session,max(1,integer('limit',100,500))))
+
+    @api.get('/sessions/<session>/state')
+    def session_state(session):
+        saved = snapshot(session)
+        description = describe_session(session, saved)
+        from core.node import execution_capacity
+        from web.execution_api import runtime_fields
+        state = saved.get('session_state') or {}
+        rows = [{**row, **runtime_fields(row['execution_id'], row.get('node_id'), row)}
+                for row in host.execution_store.session_states(session)]
+        completion = None
+        # Never present a prior task's finish as a new user request's result.
+        for message in reversed(saved.get('history') or []):
+            if message.get('role') == 'user':break
+            for call in reversed(message.get('tool_calls') or []):
+                if call.get('function', {}).get('name') != 'finish':continue
+                try:
+                    args = call['function']['arguments']
+                    args = json.loads(args) if isinstance(args, str) else args
+                    if isinstance(args, dict):completion = {key: args.get(key) for key in ('status', 'summary')}
+                except (ValueError, TypeError, KeyError):pass
+                if completion is not None:break
+            if completion is not None:break
+        ceo = {**(state.get('_ceo_activity') or {}), 'execution_id':state.get('_hermes_execution_id'),
+               'hermes_session_id':state.get('_hermes_session_id')}
+        if not description['busy'] and ceo.get('phase') in {'deciding','inspecting','waiting_children','reviewing','reporting'}:
+            ceo['phase'] = 'awaiting_user' if state.get('_awaiting_input') else 'interrupted'
+        return jsonify(ok=True, session=description, ceo=ceo,
+                       executions=rows, runtime={'max_workers':host.config.max_workers_effective, **execution_capacity()},
+                       completion=completion, event_cursor=host.bus.last_id, snapshot_at=time.time())
+
+    @api.get('/sessions/<session>/usage')
+    def usage(session):
+        saved = snapshot(session)
+        from core.hermes import PROFILES_DIR
+        from core.terminal_runtime import terminal_store
+        from web.control_usage import session_usage
+        references = []
+        with host.execution_store.lock, host.execution_store._connect() as db:
+            rows = db.execute("SELECT payload FROM executions WHERE json_extract(payload,'$.session_name')=?", (session,)).fetchall()
+        state = saved.get('session_state') or {}
+        if state.get('_hermes_session_id'):references.append(('ceo',state['_hermes_session_id'],'ceo'))
+        for row in rows:
+            execution = json.loads(row[0]);eid = execution['execution_id']
+            role = 'ceo' if eid.startswith('ceo-') or execution.get('node_id') == 'ceo' else 'worker'
+            profile = 'ceo' if role == 'ceo' else execution.get('profile') or execution.get('node_id')
+            if execution.get('session_id'):references.append((profile,execution['session_id'],role))
+            for attempt in terminal_store.list_attempts(execution_id=eid):
+                if attempt.get('session_id'):references.append((profile,attempt['session_id'],role))
+        return jsonify(ok=True, session=session, snapshot_at=time.time(), **session_usage(PROFILES_DIR,references))
 
     @api.post('/sessions/<session>/messages')
     def submit_message(session):

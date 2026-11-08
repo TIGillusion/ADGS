@@ -58,6 +58,8 @@ ssh -N -L 18021:127.0.0.1:8021 user@ADGS_HOST
 | GET | `/sessions` | 展平的可见会话列表，含项目和工作目录 |
 | PATCH | `/sessions/{session}` | `{"title":"新标题"}` 或 `{"archived":true}`；运行中不能归档 |
 | GET | `/sessions/{session}` | 会话运行状态、原 run_id、队列和消息数量 |
+| GET | `/sessions/{session}/state` | 紧凑运行快照：session、CEO阶段、下属实时名额/进程状态、全局并发、当前输入对应的finish结果、事件游标。可直接判断等待下属/排队；不含工具输出全文 |
+| GET | `/sessions/{session}/usage` | 本会话Hermes原生会话累计Token、CEO/Worker分组、缓存命中率、缺失数据说明。跨attempt/续接去重，不返回模型密钥 |
 | GET | `/sessions/{session}/messages` | 展示消息；`after=0&limit=100` 按数组偏移分页，limit 最大 200 |
 | GET | `/sessions/{session}/messages?format=raw` | 原始 history，含完整工具调用和结果；同样分页 |
 | GET | `/sessions/{session}/graph` | 已保存图谱快照；最新变化结合事件读取 |
@@ -208,9 +210,23 @@ status = client.request("GET", f"/sessions/{session}")
 python tools/adgs_control.py request GET /settings
 python tools/adgs_control.py request POST /sessions/SESSION/pause --body '{}'
 python tools/adgs_control.py events --session SESSION --after 12345 --limit 100
+python tools/adgs_control.py state SESSION
+python tools/adgs_control.py usage SESSION
 ```
 
 CLI 的 request 命令面向 JSON 接口，文件/SSE 使用支持流式响应的 HTTP 客户端；令牌放请求头，不放 URL。不要把令牌、模型 key 打印到聊天或提交到 Git。
+
+### 运行快照与用量（2026-11-08新增）
+
+建议控制Agent轮询 `/sessions/{session}/state`，用 `session.busy` 判断是否还在工作，结合 `completion.status` 与执行结果判断完成质量。`completed`、`blocked`、`answered` 含义不同；`completion=null` 表示当前输入之后尚无finish，旧任务的finish不会冒充新输入的结果。`runtime` 是系统全局五名额等并发统计，`executions` 只属于目标会话。详细任务书、工具事件和终端仍通过已有详情与下载接口读取。
+
+`/usage` 中 `input_tokens` 为未命中缓存的输入，`cache_read_tokens` 为命中输入，`cache_write_tokens` 为缓存写入；`total_input_tokens` 为三者之和。`cache_hit_rate_pct=100*cache_read_tokens/total_input_tokens`，无输入时为null。字段来自原生数据库，不是按文本长度估算。相同profile+原生session只统计一次，累计计数不能按attempt相加。读取范围为归属于该ADGS会话的持久执行与原生会话、CEO记录；不包含独立路由/验收等辅助模型调用。`partial=true` 时检查 `unavailable`，不能把缺失记录当零消耗；`cache_reporting=no_cache_tokens_reported` 可能是未命中，也可能提供方未上报缓存数据。正在运行时统计为最终一致快照，结束后再读得到稳定值。
+
+```python
+state = client.request("GET", f"/sessions/{session}/state")
+usage = client.request("GET", f"/sessions/{session}/usage")
+worker_cache_percent = usage["by_role"]["worker"]["cache_hit_rate_pct"]
+```
 
 ## 9. 错误与状态判断
 

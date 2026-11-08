@@ -35,6 +35,8 @@ def main():
     commands=parser.add_subparsers(dest='command',required=True)
     commands.add_parser('status');commands.add_parser('sessions')
     inspect=commands.add_parser('inspect');inspect.add_argument('session')
+    for name in ('state','usage'):
+        command=commands.add_parser(name);command.add_argument('session')
     resume=commands.add_parser('resume');resume.add_argument('session');resume.add_argument('--execution',required=True);resume.add_argument('--instruction');resume.add_argument('--key',required=True)
     message=commands.add_parser('message');message.add_argument('session');message.add_argument('text');message.add_argument('--mode',choices=['queue','interrupt'],default='queue');message.add_argument('--key',required=True)
     events=commands.add_parser('events');events.add_argument('--session');events.add_argument('--after',type=int,default=0);events.add_argument('--limit',type=int,default=100)
@@ -43,6 +45,7 @@ def main():
     if args.command=='status':result=client.request('GET','/health')
     elif args.command=='sessions':result=client.request('GET','/sessions')
     elif args.command=='inspect':result=client.request('GET','/sessions/'+quote(args.session,safe=''))
+    elif args.command in ('state','usage'):result=client.request('GET','/sessions/'+quote(args.session,safe='')+'/'+args.command)
     elif args.command=='resume':
         body={'execution_id':args.execution}
         if args.instruction:body['instruction']=args.instruction

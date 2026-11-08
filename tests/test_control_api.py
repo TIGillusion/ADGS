@@ -41,6 +41,46 @@ def test_auth_is_required_before_proxy_and_does_not_break_ui(control,monkeypatch
     assert client.get('/api/v1/health',headers=headers).data==b'proxied'
 
 
+def test_compact_state_preserves_runtime_flags_and_current_completion(control,monkeypatch):
+    web,client,headers,tmp=control
+    import web.execution_api
+    monkeypatch.setattr(web.execution_api,'runtime_fields',lambda *a:{'runtime_active':True,'waiting_for_slot':True,'waiting_for_children':False})
+    result=client.get('/api/v1/sessions/chat-a/state',headers=headers)
+    assert result.status_code==200
+    assert result.json['executions'][0]['waiting_for_slot'] is True
+    assert result.json['session']['phase']=='paused' and result.json['completion'] is None
+    p=tmp/'data/sessions/chat-a.json';saved=json.loads(p.read_text())
+    saved['history']+=[{'role':'assistant','tool_calls':[{'function':{'name':'finish','arguments':json.dumps({'status':'blocked','summary':'需要修复'})}}]}]
+    saved['session_state']['_ceo_activity']={'phase':'waiting_children'}
+    p.write_text(json.dumps(saved),encoding='utf-8')
+    value=client.get('/api/v1/sessions/chat-a/state',headers=headers).json
+    assert value['completion']['status']=='blocked' and value['ceo']['phase']=='interrupted'
+    saved['history'].append({'role':'user','content':'新目标'});p.write_text(json.dumps(saved),encoding='utf-8')
+    assert client.get('/api/v1/sessions/chat-a/state',headers=headers).json['completion'] is None
+    assert client.get('/api/v1/sessions/missing/state',headers=headers).status_code==404
+    assert client.get('/api/v1/sessions/chat-a/state').status_code==401
+
+
+def test_usage_is_scoped_and_deduplicates_saved_ceo_and_attempts(control,monkeypatch):
+    web,client,headers,tmp=control
+    import core.hermes
+    from core.terminal_runtime import terminal_store
+    from tests.test_control_usage import database
+    profiles=tmp/'profiles';monkeypatch.setattr(core.hermes,'PROFILES_DIR',profiles)
+    database(profiles,'ags_651',[('original-hermes','local',100,10,900,0,5),('other-chat','hidden',9999,0,0,0,1)])
+    database(profiles,'ceo',[('ceo-native','paid',100,10,100,0,2)])
+    p=tmp/'data/sessions/chat-a.json';saved=json.loads(p.read_text());saved['session_state']['_hermes_session_id']='ceo-native';p.write_text(json.dumps(saved),encoding='utf-8')
+    web.execution_store.put('ceo-test',session_name='chat-a',node_id='ceo',session_id='ceo-native')
+    monkeypatch.setattr(terminal_store,'list_attempts',lambda execution_id:[{'session_id':'original-hermes'}] if execution_id=='old-exec' else [])
+    r=client.get('/api/v1/sessions/chat-a/usage',headers=headers)
+    assert r.status_code==200 and r.json['totals']['native_session_count']==2
+    assert r.json['by_role']['worker']['cache_hit_rate_pct']==90
+    assert r.json['totals']['total_input_tokens']==1200 and not r.json['partial']
+    assert 'hidden' not in str(r.json)
+    assert client.get('/api/v1/sessions/missing/usage',headers=headers).status_code==404
+    assert client.get('/api/v1/sessions/chat-a/usage').status_code==401
+
+
 def test_retried_resume_starts_ceo_once_with_original_execution(control,monkeypatch):
     web,client,headers,_=control;calls=[]
     monkeypatch.setattr(web,'_start_task',lambda text,session,**kw:calls.append((text,session)) or {'ok':True,'queued':False})
