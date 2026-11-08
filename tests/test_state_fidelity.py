@@ -82,6 +82,45 @@ def test_wait_events_describe_child_wait_then_slot_wait_and_resume(monkeypatch):
     semaphore.release()
 
 
+def test_initial_admission_wait_matches_snapshot_detail_and_does_not_revive_stale_queue(tmp_path, monkeypatch):
+    import utils.context_probe
+    monkeypatch.setattr(utils.context_probe, 'probe_context_window', lambda *a, **kw: None)
+    import web_app as web
+    import web.execution_api as endpoints
+    from core import node
+    import core.delegation_runtime as delegation
+    from core.terminal_runtime import TerminalStore
+
+    store = ExecutionStore(tmp_path / 'executions.sqlite')
+    for eid in ('admitted-later', 'stale-queue', 'cancelled-queue', 'reacquiring', 'children'):
+        store.put(eid, session_name='admission-test', node_id='ags_1', task_id=eid,
+                  state='interrupted' if eid == 'cancelled-queue' else 'running',
+                  phase='coordinating' if eid in ('reacquiring', 'children') else 'queued')
+    monkeypatch.setattr(web, 'execution_store', store)
+    monkeypatch.setattr(endpoints, 'execution_store', store)
+    monkeypatch.setattr(endpoints, 'terminal_store', TerminalStore(tmp_path / 'terminals'))
+    monkeypatch.setattr(node, '_ACTIVE_EXECUTIONS', {eid: threading.Event() for eid in
+                       ('admitted-later', 'cancelled-queue', 'reacquiring', 'children')})
+    monkeypatch.setattr(delegation, 'execution_wait_state',
+                        lambda eid: {'reacquiring': 'slot', 'children': 'children'}.get(eid))
+    monkeypatch.setattr(web, '_session_ceos', {})
+    monkeypatch.setattr(web, '_running_sessions', {})
+    monkeypatch.setitem(web.app.config, 'ADGS_PROXY_RUNTIME', False)
+    client = web.app.test_client()
+    rows = {r['execution_id']: r for r in client.get('/api/state?session=admission-test').json['executions']}
+    for eid, expected in [('admitted-later', True), ('stale-queue', False),
+                          ('cancelled-queue', False), ('reacquiring', True), ('children', False)]:
+        assert rows[eid]['waiting_for_slot'] is expected
+        detail = client.get('/api/executions/' + eid).json['execution']
+        assert detail['waiting_for_slot'] is expected
+    assert rows['children']['waiting_for_children'] is True
+    assert rows['admitted-later']['waiting_for_children'] is False
+    assert rows['stale-queue']['runtime_active'] is False
+    # Acquiring the slot clears the initial queue phase, even without a child wait.
+    store.put('admitted-later', phase='execute')
+    assert client.get('/api/executions/admitted-later').json['execution']['waiting_for_slot'] is False
+
+
 def test_closed_waiter_never_publishes_a_false_running_status(monkeypatch):
     from core.delegation_runtime import owned_execution_slot, lend_execution_slot
     from core.node import DynamicSemaphore

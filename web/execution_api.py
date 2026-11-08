@@ -24,7 +24,7 @@ def _attempt(meta):
             "ended_at": meta.get("ended"), "last_activity_at": meta.get("last_activity")}
 
 
-def runtime_fields(execution_id, node_id=None):
+def runtime_fields(execution_id, node_id=None, checkpoint=None):
     from core.node import active_cancel
     from core.delegation_runtime import execution_wait_state
     waiting = execution_wait_state(execution_id)
@@ -34,6 +34,15 @@ def runtime_fields(execution_id, node_id=None):
     # CEO lifetime is owned by the session coordinator, not NODE's worker registry.
     if node_id != 'ceo' and not execution_id.startswith('ceo-'):
         fields['runtime_active'] = active_cancel(execution_id) is not None
+        # Initial admission waits before an ExecutionSlot exists. Slot tracking
+        # only sees ancestors reacquiring admission after waiting for children.
+        # Require a live owner so a queued checkpoint left by a stopped runtime
+        # does not falsely claim it is still waiting in the current queue.
+        saved = checkpoint or {}
+        if (waiting is None and fields['runtime_active']
+                and saved.get('phase') in {'queued', 'waiting_slot'}
+                and saved.get('state') in {'running', 'queued', 'starting', 'waiting'}):
+            fields['waiting_for_slot'] = True
     return fields
 
 
@@ -54,7 +63,7 @@ def execution_detail(execution_id):
               "last_activity_at": latest.get("last_activity") or meta.get("updated_at"),
               "attempts": [_attempt(a) for a in attempts],
               "events": bus.execution_events(execution_id)}
-    detail.update(runtime_fields(execution_id, detail.get('node_id')))
+    detail.update(runtime_fields(execution_id, detail.get('node_id'), detail))
     return jsonify(ok=True, execution=detail)
 
 

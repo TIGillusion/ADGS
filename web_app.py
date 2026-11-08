@@ -245,7 +245,7 @@ def api_state():
     from core import node as node_runtime
     capacity = node_runtime.execution_capacity() if hasattr(node_runtime, "execution_capacity") else {}
     from web.execution_api import runtime_fields
-    execution_states = [{**row, **runtime_fields(row['execution_id'], row.get('node_id'))}
+    execution_states = [{**row, **runtime_fields(row['execution_id'], row.get('node_id'), row)}
                         for row in execution_store.session_states(owner)]
     snapshot_at = time.time()
     return jsonify({
