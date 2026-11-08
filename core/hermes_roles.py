@@ -30,7 +30,24 @@ def install_role_tools(task_file=None):
         original_definitions = model_tools.get_tool_definitions
         def definitions(*args, **kwargs):
             tools = original_definitions(*args, **kwargs)
-            return [tool for tool in tools if tool.get("function", {}).get("name") == "read_file"] if only_read() else tools
+            if only_read():
+                return [tool for tool in tools if tool.get("function", {}).get("name") == "read_file"]
+            if kwargs.get("skip_tool_search_assembly") or (len(args) > 3 and args[3]):
+                return tools
+            # Delegation is ADGS's main execution path. Expose its concrete
+            # schemas directly so long task contracts need only one JSON layer.
+            # Obtain the raw catalog through the same native scope/filtering;
+            # unrelated deferred tools and old bridge calls remain available.
+            raw_args = (*args[:3], True, *args[4:]) if len(args) > 3 else args
+            raw_kwargs = dict(kwargs)
+            if len(args) <= 3:
+                raw_kwargs['skip_tool_search_assembly'] = True
+            raw = original_definitions(*raw_args, **raw_kwargs)
+            visible = {tool.get('function', {}).get('name') for tool in tools}
+            direct = [tool for tool in raw
+                      if tool.get('function', {}).get('name', '').startswith('mcp__mesh__')
+                      and tool['function']['name'] not in visible]
+            return [*tools, *direct]
         model_tools.get_tool_definitions = definitions
     if schemas:
         persistent = bool(os.environ.get('ADGS_PERSISTENT_CHANNEL'))
