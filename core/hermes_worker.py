@@ -50,6 +50,10 @@ def main():
     # Hermes resolves --profile during import, before modules cache HOME.
     # Establish its real argv before importing any installed Hermes module.
     sys.argv = ["hermes", *(command[1:] if command and command[0] == "--" else command)]
+    # Role/provider hooks import tools before native main processes flags.
+    # Honor the already supplied native flag before approval freezes it.
+    if "--yolo" in sys.argv[1:]:
+        os.environ["HERMES_YOLO_MODE"] = "1"
     from hermes_cli.main import main as hermes_main
     # Patch before main() performs provider discovery and agent/tool startup.
     # PYTHONSTARTUP cannot patch a console-script launch.

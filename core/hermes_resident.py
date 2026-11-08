@@ -95,6 +95,9 @@ def install_resident_entry(directory):
         # Preserve native MCP initialization and the actual CLI chat pipeline,
         # including staging/persistence/compression/history settlement.
         cli._single_query_mode = True
+        os.environ['HERMES_SINGLE_QUERY_SESSION'] = '1'
+        if not cli._claim_active_session('cli', stderr=bool(quiet)):
+            raise SystemExit(1)
         try:
             serve(cli, directory, exit_code=native._single_query_exit_code,
                   before_turn=prepare_turn, after_turn=settle_background)

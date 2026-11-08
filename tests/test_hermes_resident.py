@@ -7,6 +7,29 @@ from core.hermes_channel import HermesChannel
 from core.hermes_resident import serve, settle_background
 
 
+def test_resident_entry_preserves_native_unattended_context_and_session_claim(monkeypatch):
+    import os
+    import pytest
+    import core.hermes_resident as resident
+    calls=[]
+    native=SimpleNamespace(_single_query_exit_code=lambda result:0,
+        _finalize_single_query=lambda cli:calls.append('finalized'))
+    monkeypatch.setitem(sys.modules,'cli',native)
+    monkeypatch.delenv('HERMES_SINGLE_QUERY_SESSION',raising=False)
+    def claimed(*args,**kwargs):
+        assert os.environ['HERMES_SINGLE_QUERY_SESSION']=='1'
+        calls.append(('claim',args,kwargs));return True
+    cli=SimpleNamespace(_claim_active_session=claimed)
+    monkeypatch.setattr(resident,'serve',lambda *args,**kwargs:calls.append('served'))
+    resident.install_resident_entry('channel')
+    with pytest.raises(SystemExit) as result:native._run_single_query_mode(cli,'q',None,False,True)
+    assert result.value.code==0 and cli._single_query_mode
+    assert calls==[('claim',('cli',),{'stderr':False}),'served','finalized']
+    calls.clear();cli._claim_active_session=lambda *args,**kwargs:False
+    with pytest.raises(SystemExit) as result:native._run_single_query_mode(cli,'q',None,False,True)
+    assert result.value.code==1 and calls==[]
+
+
 def test_three_turns_keep_agent_history_and_consume_each_input_once(tmp_path):
     channel = HermesChannel(tmp_path)
     agent = SimpleNamespace(session_id='original')

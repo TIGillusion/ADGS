@@ -221,6 +221,10 @@ from types import SimpleNamespace
 def _single_query_exit_code(result): return result.get('exit_code',0)
 def _finalize_single_query(cli): pass
 class Client:
+    def _claim_active_session(self, owner, stderr=False):
+        assert os.environ.get('HERMES_SINGLE_QUERY_SESSION')=='1'
+        assert os.environ.get('HERMES_YOLO_MODE')=='1'
+        return True
     def __init__(self):
         self.session_id=sys.argv[sys.argv.index('--resume')+1] if '--resume' in sys.argv else 'native-'+uuid.uuid4().hex
         self.agent=SimpleNamespace(session_id=self.session_id)
