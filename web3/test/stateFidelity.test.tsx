@@ -61,6 +61,21 @@ describe("聊天 CEO 状态配色",()=>{
   });
 });
 describe("图谱执行状态精确投影",()=>{
+  it("CEO 已提交决策但等待下属时，不把最近决策用时解释成任务总用时", async ()=>{
+    const lookup=vi.spyOn(api,"execution").mockResolvedValue({ok:true,execution:{
+      execution_id:"ceo-wait",node_id:"ceo",profile:"ceo",task_id:"ceo",run_id:"r",
+      state:"completed",started_at:100,ended_at:117,
+      hermes_process_alive:true,hermes_process_state:"waiting_dispatch",attempts:[],events:[],
+    }});
+    const view=render(<ExecutionMonitor executionId="ceo-wait" nodeId="ceo" profile={null}
+      coordinator={{engine:"hermes",role:"coordinator",phase:"waiting_children",execution_id:"ceo-wait"}}/>);
+    try {
+      expect(await screen.findByText("等待调度结果")).toBeVisible();
+      expect(screen.getByText("最近决策用时")).toHaveTextContent("00:17");
+      expect(view.container.querySelector(".execution-state")).toHaveClass("state-delegating");
+      expect(view.container.querySelector(".state-done")).toBeNull();
+    } finally {view.unmount();lookup.mockRestore();}
+  });
   it("已通过的常驻会话显示等待输入，不能变成忙碌", async ()=>{
     const lookup=vi.spyOn(api,"execution").mockResolvedValue({ok:true,execution:{
       execution_id:"resident-idle",node_id:"ags_1",profile:"ags_1",task_id:"t",run_id:"r",
