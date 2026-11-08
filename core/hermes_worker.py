@@ -56,6 +56,9 @@ def main():
     if os.environ.get("ADGS_HERMES_RUN") == "1":
         from provider_compat import install_openai_compat
         install_openai_compat()
+        if os.name == 'nt' and (source / 'tools/file_operations_search.py').is_file():
+            from hermes_windows_compat import install_file_search_compat
+            install_file_search_compat()
         if (source / "run_agent.py").is_file():
             from hermes_roles import install_role_tools
             task_file = sys.argv[sys.argv.index("--query-file") + 1] if "--query-file" in sys.argv else None

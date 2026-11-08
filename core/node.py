@@ -760,9 +760,25 @@ class NODE:
                     if re.search(r'(?:不得|禁止|不要|不能|严禁|not|never)\s*$', prefix, re.I):
                         continue
                     target = clause[action.end():].lstrip(' \t:：')
-                    if re.match(path_start, target):
-                        outputs.append(target)
-            block = '\n'.join(outputs)
+                    match = re.match(path_start, target)
+                    if match:
+                        token = match.group(0).rstrip('.,;，。、')
+                        # CLI interface descriptions use filename metavariables
+                        # ("--output audit.json 文件路径"), not a required root
+                        # output. The actual invocation still declares its path.
+                        if action.group(0).lower() == '--output' and re.match(
+                                r'\s*(?:文件路径|文件名|路径参数|file\s+path\b|path\s+argument\b)',
+                                target[match.end():], re.I):
+                            continue
+                        generic = action.group(0).lower() in {'生成', 'generate'} and not re.search(r'[/\\]', token)
+                        outputs.append((token, generic))
+            qualified_names = {re.split(r'[/\\]', token.strip('`\"\''))[-1]
+                               for token, _ in outputs if re.search(r'[/\\]', token)}
+            # "Generate audit.json" describes the file; a later concrete
+            # --output build/audit.json specifies its location. Do not invent a
+            # second root output. Explicit writes and deliverables stay strict.
+            block = '\n'.join(dict.fromkeys(token for token, generic in outputs
+                                           if not (generic and token in qualified_names)))
             inline_contract = True
         # Only enforce the machine-readable format when explicitly requested.
         # Older contracts allow annotated manifests; later amendments win.
