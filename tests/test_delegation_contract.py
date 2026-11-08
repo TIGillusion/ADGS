@@ -52,6 +52,7 @@ def test_mesh_leaf_rejects_before_child_or_coordinator_is_created(tmp_path,monke
 
 
 def test_probe_placeholder_cannot_be_dispatched_as_formal_work():
-    for text in ('test','ping','smoke test placeholder - will be replaced'):
+    for text in ('test','ping','probe','PROBE','placeholder','连通性测试','smoke test placeholder - will be replaced'):
         assert delegated_task_error(text)
     assert delegated_task_error('Run the existing smoke tests, report failed cases and exact commands.') is None
+    assert delegated_task_error('Probe the local HTTP endpoint and report its status and response body.') is None

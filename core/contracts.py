@@ -137,7 +137,7 @@ def read_file_only(task):
 def delegated_task_error(task):
     """A connectivity placeholder is not a contract for a new worker instance."""
     task = str(task or "").strip()
-    if (re.fullmatch(r"test|ping|smoke test|测试|占位测试", task, re.I)
+    if (re.fullmatch(r"test|ping|probe|placeholder|smoke test|测试|占位测试|连通性测试", task, re.I)
             or re.fullmatch(r"(?:smoke\s+test\s+)?placeholder\s*[-:：]?\s*(?:will\s+be\s+replaced|to\s+be\s+replaced|待替换)", task, re.I)):
         return "不能派发连通性占位任务；请先提供正式任务书。只读连通性/候选检查请使用 list_nodes 和 probe_node。"
     return None

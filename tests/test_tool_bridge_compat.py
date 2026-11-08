@@ -31,3 +31,15 @@ def test_compat_preserves_native_batch_rejection_and_is_idempotent():
     install_bridge_compat(bridge);once=bridge.normalize_tool_call_entries;install_bridge_compat(bridge)
     assert bridge.normalize_tool_call_entries is once
     assert once({'calls':'[{"name":"read_file"},{"name":"terminal"}]'})==(None,'multi-local batches rejected')
+
+
+def test_malformed_long_contract_reports_syntax_without_dispatch_or_guessing():
+    calls=[]
+    bridge=SimpleNamespace(normalize_tool_call_entries=lambda value:calls.append(value))
+    install_bridge_compat(bridge)
+    malformed={'calls':'[{"name":"mcp__mesh__delegate_to_node","arguments":{"task_md":"完整长任务"}]'}
+    entries,error=bridge.normalize_tool_call_entries(malformed)
+    assert entries is None and not calls
+    assert 'column' in error and 'malformed JSON' in error and 'No tool was executed' in error
+    assert 'do not truncate' in error
+    assert malformed['calls'].endswith('"}]')

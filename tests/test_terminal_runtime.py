@@ -282,11 +282,12 @@ def test_resident_dead_process_resumes_original_session(resident_installation):
 
 
 @pytest.mark.parametrize('failure',['die','stall'])
-def test_resident_missing_receipt_or_cancel_is_not_success(resident_installation,failure):
+@pytest.mark.parametrize('backend',['pipe',pytest.param('conpty',marks=pytest.mark.skipif(os.name!='nt',reason='Windows ConPTY'))])
+def test_resident_missing_receipt_or_cancel_is_not_success(resident_installation,failure,backend):
     store,events,pool=resident_installation
     cancel=threading.Event()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as workers:
-        future=workers.submit(runtime.run_hermes,'p',failure,execution_id='e',attempt_id='a',store=store,backend='pipe',persistent=True,cancel=cancel,inactivity_timeout=10)
+        future=workers.submit(runtime.run_hermes,'p',failure,execution_id='e',attempt_id='a',store=store,backend=backend,persistent=True,cancel=cancel,inactivity_timeout=10)
         if failure=='stall':
             end=time.monotonic()+15
             while time.monotonic()<end:

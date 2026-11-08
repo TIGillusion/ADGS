@@ -210,7 +210,13 @@ class ResidentProcess:
                 elif self.alive():
                     import signal
                     os.killpg(self.pid, signal.SIGKILL)
-                if self.backend=='conpty': self.proc.close(force=True)
+                if self.backend=='conpty':
+                    # Job termination is asynchronous. Re-sending os.kill to
+                    # its dying ConPTY owner can report WinError 5 and replace
+                    # the true operator-cancel reason with a runtime error.
+                    # The owned job already terminates the entire tree.
+                    if hasattr(self,'reader'): self.reader.join(3)
+                    self.proc.close(force=self.job is None)
                 else:
                     if self.proc.poll() is None: self.proc.kill()
                     self.proc.wait(timeout=5)
