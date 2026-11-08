@@ -29,6 +29,8 @@ def runtime_fields(execution_id, node_id=None):
     from core.delegation_runtime import execution_wait_state
     waiting = execution_wait_state(execution_id)
     fields = {"waiting_for_children": waiting == 'children', "waiting_for_slot": waiting == 'slot'}
+    from core.hermes_process import resident_pool
+    fields.update(resident_pool.describe(execution_id))
     # CEO lifetime is owned by the session coordinator, not NODE's worker registry.
     if node_id != 'ceo' and not execution_id.startswith('ceo-'):
         fields['runtime_active'] = active_cancel(execution_id) is not None

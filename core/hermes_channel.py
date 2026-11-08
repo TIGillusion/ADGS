@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -27,6 +28,24 @@ def _bytes(value):
                       separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
+def _file_access(operation):
+    """Windows rename/read can briefly race a scanner's exclusive file handle.
+
+    Retry only access/sharing failures for a bounded period. This is never a
+    message-completeness timer: parsing and SHA validation still happen after
+    a successful read, and persistent access errors are surfaced unchanged.
+    """
+    deadline = time.monotonic()+1
+    while True:
+        try:
+            return operation()
+        except OSError as exc:
+            transient = isinstance(exc, PermissionError) or getattr(exc, 'winerror', None) in (5, 32, 33)
+            if os.name != 'nt' or not transient or time.monotonic() >= deadline:
+                raise
+            time.sleep(.02)
+
+
 class HermesChannel:
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
@@ -38,7 +57,7 @@ class HermesChannel:
     def receive(self, turn_id, kind):
         path = self._path(turn_id, kind)
         try:
-            raw = path.read_bytes()
+            raw = _file_access(path.read_bytes)
         except FileNotFoundError:
             return None
         try:
@@ -75,7 +94,7 @@ class HermesChannel:
                 # overwrites, so use a no-overwrite hard link there instead.
                 # replace() would silently lose a concurrent input.
                 if os.name == "nt":
-                    os.rename(temporary, destination)
+                    _file_access(lambda: os.rename(temporary, destination))
                 else:
                     os.link(temporary, destination)
             except FileExistsError:
@@ -84,4 +103,4 @@ class HermesChannel:
                 return False
             return True
         finally:
-            temporary.unlink(missing_ok=True)
+            _file_access(lambda: temporary.unlink(missing_ok=True))

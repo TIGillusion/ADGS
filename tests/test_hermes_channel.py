@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -52,6 +54,32 @@ def test_corruption_is_not_consumed(tmp_path):
     path.write_text(json.dumps(envelope), encoding='utf-8')
     with pytest.raises(ChannelError, match='integrity'):
         channel.receive('a', 'input')
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows transient file sharing')
+def test_transient_access_failure_retries_read_without_republishing(tmp_path, monkeypatch):
+    channel=HermesChannel(tmp_path)
+    channel.publish('a','input',{'text':'完整内容'})
+    original=Path.read_bytes
+    attempts=[]
+    def read(path):
+        attempts.append(path)
+        if len(attempts)<3:raise PermissionError('temporary exclusive handle')
+        return original(path)
+    monkeypatch.setattr(Path,'read_bytes',read)
+    assert channel.receive('a','input')=={'text':'完整内容'}
+    assert len(attempts)==3
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows transient file sharing')
+def test_persistent_access_failure_is_reported_not_treated_as_missing(tmp_path,monkeypatch):
+    import core.hermes_channel as module
+    ticks=iter([0,2])
+    monkeypatch.setattr(module.time,'monotonic',lambda:next(ticks))
+    def read(path):raise PermissionError('persistent denial')
+    monkeypatch.setattr(Path,'read_bytes',read)
+    with pytest.raises(PermissionError,match='persistent denial'):
+        HermesChannel(tmp_path).receive('a','input')
 
 
 @pytest.mark.parametrize('identifier', ['../escape', '', 'a/b'])

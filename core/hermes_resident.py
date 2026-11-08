@@ -16,6 +16,12 @@ def prepare_turn(cli, message):
         if value is not None:
             os.environ[key] = value
     agent = getattr(cli, 'agent', None)
+    if 'control_tools' in message:
+        try:
+            from .hermes_roles import update_control_tools
+        except ImportError:
+            from hermes_roles import update_control_tools
+        update_control_tools(message['control_tools'])
     if agent is not None:
         import model_tools
         tools = model_tools.get_tool_definitions(enabled_toolsets=cli.enabled_toolsets,
@@ -55,6 +61,12 @@ def serve(cli, directory, *, exit_code, poll_interval=.05, before_turn=None, aft
             print('[ADGS_OUTPUT:' + token + ':start]', end='', flush=True)
         if before_turn:
             before_turn(cli, message)
+        if 'control_tools' in message:
+            try:
+                from . import hermes_control
+            except ImportError:
+                import hermes_control
+            hermes_control.begin(cli, directory, turn_id, message)
         cli._last_turn_result = None
         response = cli.chat(instruction)
         if after_turn:
@@ -69,6 +81,8 @@ def serve(cli, directory, *, exit_code, poll_interval=.05, before_turn=None, aft
             'pid': os.getpid(), 'agent_id': id(agent), 'session_id': cli.session_id,
             'exit_code': exit_code(result), 'output': response or '',
             'error': str((result or {}).get('error') or '') if isinstance(result, dict) else 'No turn result',
+            'usage': {key: result[key] for key in ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
+                      if isinstance(result, dict) and isinstance(result.get(key), (int, float))},
         })
         sequence += 1
 

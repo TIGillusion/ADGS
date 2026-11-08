@@ -10,6 +10,20 @@ beforeEach(() => { sources().length = 0; vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe("durable read-only terminal feed", () => {
+  it("advances across lifecycle records without an endless missing-output reconnect", async () => {
+    const records: number[] = [];
+    const status = vi.fn();
+    const stream = new TerminalStream("a1", async (batch) => { records.push(...batch.map((r) => r.seq)); }, status);
+    stream.start();
+    send(sources()[0], 1, "", "resize");
+    send(sources()[0], 2, "", "lifecycle");
+    send(sources()[0], 3, "原进程下一轮输出");
+    send(sources()[0], 4, "", "end");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(records).toEqual([1, 2, 3, 4]);
+    expect(sources()).toHaveLength(1);
+    expect(status).toHaveBeenLastCalledWith("本轮输出已结束");
+  });
   it("preserves control sequences and batches output without repeated records", async () => {
     const write = vi.fn(async (_records: TerminalRecord[]) => {});
     const stream = new TerminalStream("a1", write, () => {});

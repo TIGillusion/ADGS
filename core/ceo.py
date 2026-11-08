@@ -73,6 +73,7 @@ class CEO:
         "_run_id": None, "_awaiting_input": False,
         "_hermes_session_id": None, "_hermes_execution_id": None,
         "_hermes_input_count": 0, "_hermes_input_hash": "",
+        "_hermes_pending_tool_id": None, "_hermes_settled_tool_id": None, "_hermes_policy_hash": "",
         "_ceo_activity": None,
     }
 
@@ -429,7 +430,17 @@ class CEO:
         self._recovery_dispatched = False
         self.last_talk_session = self._talk_session  # 保存归属兜底（talk 结束后节点事件仍存对会话）
         try:
-            return self._talk_body(user_input)
+            reply = self._talk_body(user_input)
+            settle = getattr(self.chat, 'settle_pending', None)
+            if callable(settle):
+                try:
+                    settle(self.history)
+                except Exception:
+                    logging.getLogger(__name__).exception('CEO native tool-result settlement failed')
+                    reason = 'CEO 已保存本轮汇报，但 Hermes 原会话的工具结果交接尚未确认，任务保留待恢复。'
+                    self._suspend_turn('error', reason)
+                    reply += '\n\n' + reason
+            return reply
         finally:
             self._recovery_execution = None
             self._talk_session = None

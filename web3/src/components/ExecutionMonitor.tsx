@@ -13,10 +13,10 @@ import type { BusEvent, ExecutionAttempt, ExecutionDetail, TerminalRecord } from
 
 const EVENT_LABELS: Record<string, string> = {
   "node.brain": "节点决策", "node.status": "执行状态", "node.eval": "验收结论", "node.rework": "补充与返工原因",
-  "node.delegate": "委派子任务", "hermes.start": "Hermes 启动", "hermes.end": "Hermes 退出",
+  "node.delegate": "委派子任务", "hermes.start": "Hermes 本轮开始", "hermes.end": "Hermes 本轮结束",
   "hermes.heartbeat": "进程心跳", "tool.start": "工具开始", "tool.end": "工具结束",
   "execution.status": "执行状态", "execution.activity": "工具活动",
-  "terminal.started": "终端启动", "terminal.ended": "终端结束", "terminal.activity": "执行活动",
+  "terminal.started": "执行轮次开始", "terminal.ended": "本轮输出结束", "terminal.activity": "执行活动",
   "terminal.stage": "终端阶段", "terminal.diagnostic": "终端诊断", "hermes.message": "Hermes 会话消息",
   "chat.ceo_activity": "CEO 协调阶段",
 };
@@ -28,10 +28,11 @@ const STATE_LABELS: Record<string, string> = {
   waiting_user: "等待澄清", protocol_error: "汇报待修复", evaluation_unavailable: "验收暂不可用",
   context_overflow: "上下文待恢复",
 };
-const PHASE_LABELS: Record<string, string> = { queued:"等待执行名额", coordinating: "协调下属", decision: "节点决策", delegation: "委派执行", acceptance: "验收", execute: "执行", executing: "执行", evaluating: "验收", evaluation: "验收", rework: "补充与返工", resume: "继续会话", finished: "已结束" };
+const PHASE_LABELS: Record<string, string> = { queued:"等待执行名额", coordinating: "协调下属", decision: "节点决策", delegation: "委派执行", acceptance: "验收", execute: "执行", executing: "执行", evaluating: "验收", evaluation: "验收", rework: "补充与返工", continue: "原会话继续", resume: "恢复会话", finished: "已结束" };
 const FREQUENT_EVENTS = new Set(["hermes.heartbeat", "terminal.activity", "terminal.output", "hermes.line"]);
 const isKeyEvent = (event: BusEvent) => !FREQUENT_EVENTS.has(event.type) && event.type !== "hermes.message";
-const TERMINAL_STAGES: Record<string, string> = { process_exited: "进程已退出", tree_reaped: "子进程已回收", output_drained: "输出已读取", terminal_closed: "终端已关闭" };
+const TERMINAL_STAGES: Record<string, string> = { process_exited: "进程已退出", tree_reaped: "子进程已回收", output_drained: "输出已读取", terminal_closed: "终端已关闭", turn_completed: "本轮已完成", waiting_input: "会话保持，等待输入", waiting_dispatch: "等待调度结果" };
+const CONTINUATION_LABELS = { start: "新会话", continue: "原进程继续", resume: "恢复历史会话" };
 function eventPreview(event: BusEvent): string {
   const raw = String(event.data.phase ?? event.data.action ?? event.data.status ?? event.data.tool ?? event.data.detail ?? "");
   const labels = event.type === "chat.ceo_activity" ? CEO_PHASES : event.type === "terminal.stage" ? TERMINAL_STAGES : {...PHASE_LABELS,...STATE_LABELS};
@@ -58,7 +59,7 @@ function useExecution(id: string) {
         if (!result.ok || !result.execution) throw new Error(result.error || "执行记录暂不可用");
         setExecution(result.execution);
         setError("");
-        if (!result.execution.ended_at) timer = setTimeout(() => void load(), 5000);
+        if (!result.execution.ended_at || result.execution.hermes_process_alive) timer = setTimeout(() => void load(), 5000);
       } catch (e) {
         if (controller.signal.aborted) return;
         setError(e instanceof Error ? e.message : String(e));
@@ -241,13 +242,14 @@ export function ExecutionMonitor({ executionId, nodeId, profile, coordinator }: 
       <div className="flex gap-1"><button aria-label={expanded ? "收起执行面板" : "展开执行面板"} onClick={() => setExpanded((v) => !v)}><Maximize2 size={16} /></button><button aria-label="关闭" onClick={() => store.selectInst(null)}><X size={17} /></button></div>
     </header>
     {coordinator && <div className="execution-meta"><span>固定 CEO · Hermes · 只负责协调</span><b>{ceoPhaseLabel(coordinator)}</b></div>}
+    {execution?.hermes_process_alive && execution.hermes_process_state !== "working" && <div className="execution-meta"><span>Hermes 会话保持</span><b>{execution.hermes_process_state === "waiting_dispatch" ? "等待调度结果" : "等待下一次输入"}</b></div>}
     <div className="execution-meta"><span>阶段 <b>{coordinator ? ceoPhaseLabel(coordinator) : PHASE_LABELS[execution?.phase ?? ""] ?? execution?.phase ?? "等待记录"}</b></span><span>已用时 <b className="num">{execution?.started_at ? fmtDuration(Math.max(0, (execution.ended_at || Date.now() / 1000) - execution.started_at)) : "—"}</b></span><span>最近活动 <b>{execution?.last_activity_at ? fmtAgo(execution.last_activity_at) : "—"}</b></span><span>Profile <b className="num">{execution?.profile || nodeId}</b></span></div>
     {activityLabel && state === "running" && attempt?.state === "running" && activity && Date.now() / 1000 - activity.ts < 90 && <div className="execution-meta" title={description}><span>当前活动 <b>{activityLabel}</b></span><span>无进展 <b className="num">{fmtDuration(Number(activity.data.idle_seconds ?? 0))}</b></span></div>}
     <nav className="execution-tabs">{(coordinator ? [["terminal", "Hermes 决策记录"], ["events", "执行事件"], ["profile", "CEO 职责与技能"]] : [["terminal", "实时终端"], ["events", "执行事件"], ["acceptance", "验收"], ["profile", "节点档案"]]).map(([key, label]) => <button key={key} className={tab === key ? "is-active" : ""} onClick={() => setTab(key)}>{label}{key === "events" && keyEventCount > 0 && <small>{keyEventCount}</small>}</button>)}</nav>
     <div className="execution-body">
       {error && <div className="execution-error">{error}</div>}
       {tab === "terminal" && <>
-        {attempts.length > 0 && <div className="attempt-select"><label htmlFor="attempt-choice">执行尝试</label><select id="attempt-choice" value={attempt?.attempt_id ?? ""} onChange={(e) => setPickedAttempt(e.target.value)}>{attempts.map((a, i) => <option key={a.attempt_id} value={a.attempt_id}>第 {i + 1} 次 · {STATE_LABELS[a.state ?? ""] ?? a.phase ?? a.state ?? a.attempt_id}</option>)}</select></div>}
+        {attempts.length > 0 && <div className="attempt-select"><label htmlFor="attempt-choice">执行尝试</label><select id="attempt-choice" value={attempt?.attempt_id ?? ""} onChange={(e) => setPickedAttempt(e.target.value)}>{attempts.map((a, i) => <option key={a.attempt_id} value={a.attempt_id}>第 {i + 1} 次 · {a.continuation ? `${CONTINUATION_LABELS[a.continuation]} · ` : ""}{STATE_LABELS[a.state ?? ""] ?? a.phase ?? a.state ?? a.attempt_id}</option>)}</select></div>}
         {attempt ? <TerminalView key={attempt.attempt_id} attempt={attempt} /> : <div className="execution-empty">{execution ? "Hermes 尚未启动，等待调度或节点决策…" : "正在读取执行记录…"}</div>}
       </>}
       {tab === "events" && <EventTimeline events={events} />}

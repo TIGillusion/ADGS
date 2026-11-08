@@ -1178,6 +1178,10 @@ class NODE:
                 return {"output": "", "exit_code": -1, "error": "任务总预算耗尽",
                         "session_id": session_id, "infra_failure": True, 'termination_reason':'wall_timeout'}
             phase = "resume" if session_id else "execute"
+            if session_id:
+                from core.hermes_process import resident_pool
+                if resident_pool.describe(self._execution_id)['hermes_process_alive']:
+                    phase = 'continue'
             if worker_launch_on_hold() and not recovery_grant(self._execution_id):
                 raise RuntimeError(WORKER_HOLD_REASON)
             try:
@@ -1213,8 +1217,8 @@ class NODE:
         return self._execute_attempt(instruction, timeout, session_id)
 
     def _correction_instruction(self, task_md: str, last_error: str) -> str:
-        """生成 resume 修正指令：告知上次失败原因，让其基于现有进度继续"""
-        return f"""【kill+resume 修正指令】
+        """告知上次失败原因，让原会话基于现有进度继续。"""
+        return f"""【原会话修正指令】
 
 上一次执行未成功完成（原因：{last_error or '超时或异常退出'}）。
 请先检查工作区当前已有进度（文件/代码/报告/产物），在此基础上继续完成剩余工作，

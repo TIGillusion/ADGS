@@ -53,6 +53,7 @@ export interface ExecutionAttempt {
   started_at?: number;
   ended_at?: number | null;
   exit_code?: number | null;
+  continuation?: "start" | "continue" | "resume";
 }
 
 export interface ExecutionDetail {
@@ -66,6 +67,8 @@ export interface ExecutionDetail {
   waiting_for_children?: boolean;
   waiting_for_slot?: boolean;
   runtime_active?: boolean;
+  hermes_process_alive?: boolean;
+  hermes_process_state?: "working" | "waiting_input" | "waiting_dispatch" | "exited";
   started_at?: number;
   ended_at?: number | null;
   last_activity_at?: number;
@@ -75,7 +78,7 @@ export interface ExecutionDetail {
 }
 
 export interface TerminalRecord {
-  type: "data" | "resize" | "end";
+  type: "data" | "resize" | "lifecycle" | "end";
   seq: number;
   attempt_id: string;
   data?: string;

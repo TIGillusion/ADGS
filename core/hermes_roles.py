@@ -33,11 +33,22 @@ def install_role_tools(task_file=None):
             return [tool for tool in tools if tool.get("function", {}).get("name") == "read_file"] if only_read() else tools
         model_tools.get_tool_definitions = definitions
     if schemas:
+        persistent = bool(os.environ.get('ADGS_PERSISTENT_CHANNEL'))
+        if persistent:
+            try:
+                from . import hermes_control
+            except ImportError:
+                import hermes_control
+            hermes_control.install_decision_boundary()
         from tools.registry import registry
         for tool in schemas:
             fn = tool["function"]
 
             def submit(arguments, name=fn["name"], **_kwargs):
+                if persistent:
+                    if hermes_control.active is None:
+                        raise RuntimeError('CEO turn was not initialized')
+                    return hermes_control.active.submit(name, arguments)
                 destination = Path(decision_file)
                 try:
                     # The parent reads only complete receipts after replace.
@@ -53,12 +64,22 @@ def install_role_tools(task_file=None):
                 threading.Event().wait()
 
             registry.register(fn["name"], "adgs-ceo", fn, submit, override=True)
-        model_tools.get_tool_definitions = lambda *args, **kwargs: schemas
+        current_schemas = [schemas]
+        def update_schemas(value):
+            # CEO's complete tool catalog is registered at process start. Its
+            # per-decision availability (e.g. inspection budget) is dynamic.
+            if any(tool['function']['name'] not in names for tool in value):
+                raise ValueError('CEO tool catalog changed; restart explicitly')
+            current_schemas[0] = value
+        global _update_schemas
+        _update_schemas = update_schemas
+        model_tools.get_tool_definitions = lambda *args, **kwargs: current_schemas[0]
 
     original = tool_executor._dispatch_authorized_once
 
     def dispatch(agent, state, ref, **kwargs):
-        denied = bool(schemas and ref.name not in names)
+        allowed_names = {tool['function']['name'] for tool in current_schemas[0]} if schemas else set()
+        denied = bool(schemas and ref.name not in allowed_names)
         if only_read() and ref.name != "read_file":
             kwargs["scope_block"] = kwargs.get("scope_block") or "本任务明确只允许 read_file；请读取指定文件并在对话中汇报，不调用其他工具。"
             return original(agent, state, ref, **kwargs)
@@ -83,3 +104,10 @@ def install_role_tools(task_file=None):
 
 
 _receipt_lock = threading.Lock()
+_update_schemas = None
+
+
+def update_control_tools(schemas):
+    if _update_schemas is None:
+        raise RuntimeError('Resident has no CEO tool registry')
+    _update_schemas(schemas)

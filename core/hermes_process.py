@@ -168,6 +168,30 @@ class ResidentProcess:
             self.session_id = result['session_id']
             return result
 
+    def decision(self):
+        with self.lock:
+            if not self.current: return None
+            tid, route = self.current
+            result = self.channel.receive(tid, 'decision')
+            if not result or not route.drained.is_set(): return None
+            self.session_id = result['session_id']
+            return result
+
+    def resolve_decision(self, content, timeout=120):
+        with self.lock:
+            if self.decision() is None:
+                raise RuntimeError('No pending CEO decision to resolve')
+            tid, _ = self.current
+            self.channel.publish(tid, 'tool-result', {'content': content})
+        deadline = time.monotonic()+timeout
+        while self.result() is None:
+            if not self.alive() or self.reader_error:
+                raise RuntimeError(self.reader_error or 'CEO exited while persisting tool result')
+            if time.monotonic() > deadline:
+                raise RuntimeError('CEO tool result was submitted but settlement is unconfirmed; do not resend')
+            time.sleep(.05)
+        return self.finish()
+
     def finish(self):
         with self.lock:
             result = self.result()
@@ -225,6 +249,17 @@ class ResidentPool:
             if self.entries.get(execution_id, (None,))[0] is process:
                 del self.entries[execution_id]
         process.close(grace=0)
+
+    def describe(self, execution_id):
+        with self.lock:
+            saved = self.entries.get(execution_id)
+        if not saved or not saved[0].alive():
+            return {'hermes_process_alive': False, 'hermes_process_state': 'exited'}
+        process = saved[0]
+        with process.lock:
+            state = 'waiting_input' if process.current is None else 'waiting_dispatch' if process.decision() else 'working'
+            return {'hermes_process_alive': True, 'hermes_process_state': state,
+                    'hermes_process_pid': process.pid}
 
     def close(self):
         with self.lock:

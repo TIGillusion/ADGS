@@ -48,6 +48,19 @@ def test_snapshot_and_execution_detail_report_live_waiting_and_restart_residue(t
     assert client.get('/api/executions/stale').json['execution']['runtime_active'] is False
     assert client.get('/api/state?session=chat-b').json['executions'] == []
 
+    # A resident can be alive after its business task passed. It is not a live
+    # execution and must not turn the completed graph node back to running.
+    from types import SimpleNamespace
+    import core.hermes_process as processes
+    pool = processes.ResidentPool()
+    pool.entries['done'] = (SimpleNamespace(alive=lambda: True, current=None,
+        lock=threading.RLock(), pid=1234), ())
+    monkeypatch.setattr(processes, 'resident_pool', pool)
+    done = client.get('/api/executions/done').json['execution']
+    assert done['state'] == 'passed' and done['runtime_active'] is False
+    assert done['hermes_process_alive'] is True
+    assert done['hermes_process_state'] == 'waiting_input'
+
 
 def test_wait_events_describe_child_wait_then_slot_wait_and_resume(monkeypatch):
     from core.delegation_runtime import owned_execution_slot, lend_execution_slot, execution_wait_state

@@ -1,5 +1,5 @@
-"""Durable, independently observed Hermes attempts. Terminal bytes are presentation,
-not a completion signal. Each attempt owns its PTY and process-tree lifetime.
+"""Durable Hermes attempts with independently owned resident process lifetimes.
+Terminal bytes are presentation; verified receipts establish turn boundaries.
 """
 from __future__ import annotations
 
@@ -133,10 +133,13 @@ class TerminalStore:
     def get_attempt(self, attempt_id):
         with self._lock, self._connect() as conn:
             row = conn.execute("SELECT a.*, COALESCE((SELECT MAX(seq) FROM records WHERE attempt_id=a.attempt_id),0) AS last_seq FROM attempts a WHERE attempt_id=?", (attempt_id,)).fetchone()
+            lifecycle = conn.execute("SELECT data FROM records WHERE attempt_id=? AND kind='lifecycle' ORDER BY seq DESC LIMIT 1", (attempt_id,)).fetchone()
         if not row:
             return None
         result = dict(row)
         result["node"] = result["profile"]
+        if lifecycle:
+            result['continuation'] = json.loads(lifecycle[0]).get('mode')
         return result
 
     def list_attempts(self, execution_id=None, run_id=None, task_id=None):
@@ -511,11 +514,13 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
     resident = None
     resident_owned = False
     resident_result = None
+    resident_action = None
     keep_resident = False
-    # Enabled by rollout after the CEO bridge and runtime checks are complete.
-    use_resident = (persistent if persistent is not None else os.environ.get("ADGS_HERMES_RESIDENT") == "1") and not grant and not control_tools
+    # Explicit opt-out retains the old one-shot adapter for rollback.
+    use_resident = (persistent if persistent is not None else os.environ.get("ADGS_HERMES_RESIDENT", "1") == "1") and not grant
     from core.hermes_process import ResidentProcess, resident_pool
-    resident_identity = (str(store.root.resolve()), str(profile_home.resolve()), task_workspace, model, backend)
+    from core.session_context import runtime_session
+    resident_identity = (str(store.root.resolve()), str(profile_home.resolve()), task_workspace, model, backend, runtime_session.get())
     session_leases = {}
     threads = []
     chunks = []
@@ -608,7 +613,11 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
         env["ADGS_COORDINATOR_FLAG"] = str(coordinator_flag)
         if control_tools:
             tools_file = directory / "ceo-tools.json"
-            tools_file.write_text(json.dumps(control_tools, ensure_ascii=False), encoding="utf-8")
+            catalog = control_tools
+            if use_resident and profile == 'ceo':
+                from config.prompts import CEO_TOOLS
+                catalog = CEO_TOOLS
+            tools_file.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
             env["ADGS_CONTROL_TOOLS"] = str(tools_file)
             env["ADGS_CONTROL_DECISION"] = str(decision)
         else:
@@ -655,7 +664,8 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 if observed_session not in session_leases:
                     session_leases[observed_session] = SessionLease(profile_home, observed_session)
                 resident.router.outside = lambda text: None
-                resident.begin(instruction, feed, environment={
+                control = {'control_tools': control_tools} if control_tools else {}
+                resident.begin(instruction, feed, **control, environment={
                     "ADGS_CURRENT_TASK_FILE": str(task_file),
                     "ADGS_COORDINATOR_FLAG": str(coordinator_flag),
                     "ADGS_HERMES_RECEIPT": str(receipt)})
@@ -716,7 +726,11 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 resident_result = resident.result()
                 if resident_result is not None:
                     break
-            if control_tools and decision.is_file():
+                resident_action = resident.decision() if control_tools else None
+                if resident_action is not None:
+                    reason = 'decision_ready'
+                    break
+            if not resident and control_tools and decision.is_file():
                 reason, error = "decision_ready", ""
                 break
             if now - last_poll >= 1:
@@ -818,7 +832,15 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 reason, error = "input_required", "Hermes startup requires operator input"
                 break
             time.sleep(0.2)
-        if resident and reason == "completed" and resident_result is not None:
+        if resident and resident_action is not None:
+            observed_session = resident.session_id
+            if observed_session not in session_leases:
+                session_leases[observed_session] = SessionLease(profile_home, observed_session)
+            decision.write_text(json.dumps({key: resident_action[key] for key in ('name','arguments')}, ensure_ascii=False), encoding='utf-8')
+            keep_resident = True
+            exit_code = 0
+            _emit("terminal.stage", **ids, phase="waiting_dispatch", elapsed_seconds=round(time.monotonic()-started, 3))
+        elif resident and reason == "completed" and resident_result is not None:
             resident_result = resident.finish()
             observed_session = resident.session_id
             if observed_session not in session_leases:
@@ -921,7 +943,7 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 proc.close(force=True)
             except Exception:
                 pass
-        _emit("terminal.stage", **ids, phase="waiting_input" if keep_resident else "terminal_closed", elapsed_seconds=round(time.monotonic()-started, 3))
+        _emit("terminal.stage", **ids, phase=("waiting_dispatch" if resident_action else "waiting_input") if keep_resident else "terminal_closed", elapsed_seconds=round(time.monotonic()-started, 3))
         for thread in threads:
             thread.join(2)
         if not resident:
@@ -961,4 +983,4 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
         answer += "\n\n[恢复会话已保存在隔离副本。原 profile 中其他会话已保留。]"
     if published:
         answer += "\n\n[平台已核对并发布的新产物]\n" + "\n".join(published)
-    return {"output": utf8_safe(answer), "exit_code": exit_code if reason == "completed" else exit_code if reason == "process_error" else -1, "error": error, "session_id": observed_session, "termination_reason": reason, "infra_failure": infrastructure, "terminal_path": str(output_file), "process_retained": keep_resident, **ids}
+    return {"output": utf8_safe(answer), "exit_code": exit_code if reason == "completed" else exit_code if reason == "process_error" else -1, "error": error, "session_id": observed_session, "termination_reason": reason, "infra_failure": infrastructure, "terminal_path": str(output_file), "process_retained": keep_resident, "control_decision": resident_action, **ids}

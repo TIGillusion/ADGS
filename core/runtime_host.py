@@ -235,7 +235,11 @@ def serve():
     if bootstrap:
         import threading
         threading.Thread(target=bootstrap, daemon=True, name="adgs-bootstrap").start()
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        from core.hermes_process import resident_pool
+        resident_pool.close()
 
 
 if __name__ == "__main__":

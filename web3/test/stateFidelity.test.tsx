@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NodesView } from "@/components/NodesView";
 import { OverviewView } from "@/components/OverviewView";
 import { ChatView } from "@/components/ChatView";
@@ -7,6 +7,8 @@ import { store } from "@/lib/store";
 import { applyEventToGraph, graphInit } from "@/lib/graph";
 import { displayGraph } from "@/lib/graphFlow";
 import type { BusEvent, GraphNode } from "@/types";
+import { ExecutionMonitor } from "@/components/ExecutionMonitor";
+import { api } from "@/lib/api";
 
 let seq = 0;
 const event = (type: string, data: Record<string, unknown>): BusEvent => ({id:++seq,type,ts:seq,data});
@@ -59,6 +61,19 @@ describe("聊天 CEO 状态配色",()=>{
   });
 });
 describe("图谱执行状态精确投影",()=>{
+  it("已通过的常驻会话显示等待输入，不能变成忙碌", async ()=>{
+    const lookup=vi.spyOn(api,"execution").mockResolvedValue({ok:true,execution:{
+      execution_id:"resident-idle",node_id:"ags_1",profile:"ags_1",task_id:"t",run_id:"r",
+      state:"passed",phase:"finished",runtime_active:false,ended_at:100,
+      hermes_process_alive:true,hermes_process_state:"waiting_input",attempts:[],events:[],
+    }});
+    const view=render(<ExecutionMonitor executionId="resident-idle" nodeId="ags_1" profile={null}/>);
+    try {
+      expect(await screen.findByText("等待下一次输入")).toBeVisible();
+      expect(view.container.querySelector(".execution-state")).toHaveClass("state-done");
+      expect(view.container.querySelector(".state-running")).toBeNull();
+    } finally { view.unmount();lookup.mockRestore(); }
+  });
   it("A2A 中断不变成任务失败，仍可恢复",()=>{
     const g=fold([event("chat.user",{text:"开始"}),event("a2a.delegate",{node:"ags_1",parent:"ceo",child_execution_id:"e1",delegation_id:"d1",status:"running"}),event("a2a.delegate",{node:"ags_1",parent:"ceo",child_execution_id:"e1",delegation_id:"d1",status:"interrupted"})]);
     expect(instance(g).status).toBe("interrupted");

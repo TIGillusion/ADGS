@@ -40,7 +40,7 @@ export class TerminalStream {
       let record: TerminalRecord;
       try { record = JSON.parse(String(event.data)) as TerminalRecord; } catch { return; }
       if (record.attempt_id !== this.attemptId || !Number.isSafeInteger(record.seq)) return;
-      if (!["data", "resize", "end"].includes(record.type)) return;
+      if (!["data", "resize", "lifecycle", "end"].includes(record.type)) return;
       if (record.seq <= this.received) return;
       if (record.seq !== this.received + 1) {
         this.status("补收缺失输出");
@@ -94,7 +94,7 @@ export class TerminalStream {
       if (this.stopped) return;
       this.cursor = batch[batch.length - 1].seq;
       if (batch[batch.length - 1].type === "end") {
-        this.status("执行已结束");
+        this.status("本轮输出已结束");
         this.destroy();
       }
     } catch {
