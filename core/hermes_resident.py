@@ -8,7 +8,31 @@ except ImportError:
     from hermes_channel import HermesChannel, ChannelError
 
 
-def serve(cli, directory, *, exit_code, poll_interval=.05):
+def prepare_turn(cli, message):
+    # A resident outlives the attempt that launched it. Receipt paths and role
+    # constraints must follow the new contract, without recreating the Agent.
+    for key in ('ADGS_CURRENT_TASK_FILE', 'ADGS_COORDINATOR_FLAG', 'ADGS_HERMES_RECEIPT'):
+        value = message.get('environment', {}).get(key)
+        if value is not None:
+            os.environ[key] = value
+    agent = getattr(cli, 'agent', None)
+    if agent is not None:
+        import model_tools
+        tools = model_tools.get_tool_definitions(enabled_toolsets=cli.enabled_toolsets,
+            disabled_toolsets=cli.disabled_toolsets, quiet_mode=True)
+        agent.tools = tools
+        agent.valid_tool_names = {tool['function']['name'] for tool in tools}
+
+
+def settle_background(cli):
+    # Keep this turn and its scheduling slot until its business subprocesses
+    # finish. MCP helpers are not in this native terminal-process registry.
+    from tools.process_registry import process_registry
+    while process_registry.count_running():
+        time.sleep(.2)
+
+
+def serve(cli, directory, *, exit_code, poll_interval=.05, before_turn=None, after_turn=None):
     channel = HermesChannel(directory)
     sequence = 1
     channel.publish('process', 'ready', {'pid': os.getpid(), 'session_id': cli.session_id})
@@ -26,12 +50,21 @@ def serve(cli, directory, *, exit_code, poll_interval=.05):
         # An acknowledgement means this process accepted the entire verified
         # envelope, not that the model has finished its response.
         channel.publish(turn_id, 'received', {'pid': os.getpid(), 'session_id': cli.session_id})
+        token = message.get('output_token')
+        if token:
+            print('[ADGS_OUTPUT:' + token + ':start]', end='', flush=True)
+        if before_turn:
+            before_turn(cli, message)
         cli._last_turn_result = None
         response = cli.chat(instruction)
+        if after_turn:
+            after_turn(cli)
         result = cli._last_turn_result
         agent = getattr(cli, 'agent', None)
         if getattr(agent, 'session_id', None):
             cli.session_id = agent.session_id
+        if token:
+            print('[ADGS_OUTPUT:' + token + ':end]', end='', flush=True)
         channel.publish(turn_id, 'completed', {
             'pid': os.getpid(), 'agent_id': id(agent), 'session_id': cli.session_id,
             'exit_code': exit_code(result), 'output': response or '',
@@ -48,7 +81,8 @@ def install_resident_entry(directory):
         # including staging/persistence/compression/history settlement.
         cli._single_query_mode = True
         try:
-            serve(cli, directory, exit_code=native._single_query_exit_code)
+            serve(cli, directory, exit_code=native._single_query_exit_code,
+                  before_turn=prepare_turn, after_turn=settle_background)
         finally:
             native._finalize_single_query(cli)
         raise SystemExit(0)

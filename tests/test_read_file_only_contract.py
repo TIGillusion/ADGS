@@ -34,3 +34,11 @@ def test_tool_schema_and_dispatch_enforce_explicit_read_file_only(tmp_path, monk
         assert 'read_file' in calls[-1]['scope_block']
     executor._dispatch_authorized_once(None, None, SimpleNamespace(name='read_file'), scope_block=None)
     assert calls[-1]['scope_block'] is None
+    # A subsequent turn updates the task and restores the original tool catalog;
+    # the resident Agent must not keep the first turn's read-only closure.
+    next_contract = tmp_path/'next.md'
+    next_contract.write_text('## 当前任务\n编写核查脚本。', encoding='utf-8')
+    monkeypatch.setenv('ADGS_CURRENT_TASK_FILE', str(next_contract))
+    assert [t['function']['name'] for t in model.get_tool_definitions()] == ['read_file', 'search_files', 'terminal']
+    executor._dispatch_authorized_once(None, None, SimpleNamespace(name='terminal'), scope_block=None)
+    assert calls[-1]['scope_block'] is None

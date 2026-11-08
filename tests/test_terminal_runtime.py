@@ -142,6 +142,7 @@ def test_resume_lease_is_per_session_not_profile(tmp_path):
 
 @pytest.fixture
 def fake_installation(tmp_path, monkeypatch):
+    monkeypatch.setenv("ADGS_HERMES_RESIDENT", "0")
     monkeypatch.setattr(runtime, "hermes_frozen_exe", lambda: None)
     source = tmp_path / "installed"
     (source / "hermes_cli").mkdir(parents=True)
@@ -196,6 +197,136 @@ def main():
     events = []
     monkeypatch.setattr(runtime, "_emit", lambda name, **data: events.append((name, data)))
     return runtime.TerminalStore(tmp_path / "records"), events
+
+
+@pytest.fixture
+def resident_installation(fake_installation, monkeypatch):
+    from core.hermes_process import ResidentPool
+    import core.hermes_process as processes
+    pool = ResidentPool()
+    monkeypatch.setattr(processes, 'resident_pool', pool)
+    root = Path(__file__).resolve().parents[1]
+    for name in ('hermes_resident.py', 'hermes_channel.py'):
+        shutil.copy2(root/'core'/name, runtime.ROOT/'core'/name)
+    _, source = runtime.hermes_installation()
+    (source/'tools').mkdir()
+    (source/'tools/__init__.py').write_text('')
+    (source/'tools/process_registry.py').write_text('from types import SimpleNamespace\nprocess_registry=SimpleNamespace(count_running=lambda:0)\n')
+    (source/'model_tools.py').write_text('def get_tool_definitions(**kw): return []\n')
+    (source/'hermes_cli/main.py').write_text('def main():\n    import cli\n    cli._run_single_query_mode(cli.Client(),None,None,False,True)\n')
+    (source/'cli.py').write_text('''
+import os,sys,time,json,uuid,sqlite3
+from pathlib import Path
+from types import SimpleNamespace
+def _single_query_exit_code(result): return result.get('exit_code',0)
+def _finalize_single_query(cli): pass
+class Client:
+    def __init__(self):
+        self.session_id=sys.argv[sys.argv.index('--resume')+1] if '--resume' in sys.argv else 'native-'+uuid.uuid4().hex
+        self.agent=SimpleNamespace(session_id=self.session_id)
+        self.enabled_toolsets=self.disabled_toolsets=None
+        self.home=Path(os.environ['HERMES_HOME'])/'profiles'/sys.argv[sys.argv.index('--profile')+1]
+        self.home.mkdir(parents=True,exist_ok=True)
+        with sqlite3.connect(self.home/'state.db') as db:
+            db.execute('CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, end_reason TEXT, parent_session_id TEXT, last_activity_at REAL)')
+            db.execute('CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, session_id TEXT,role TEXT,content TEXT,tool_call_id TEXT,tool_calls TEXT,tool_name TEXT,timestamp REAL,finish_reason TEXT)')
+            db.execute('INSERT OR IGNORE INTO sessions VALUES (?,NULL,NULL,?)',(self.session_id,time.time()))
+    def chat(self,text):
+        print('native-output:'+text,flush=True)
+        if text=='die': os._exit(3)
+        if text=='stall': time.sleep(60)
+        if text=='compress':
+            with sqlite3.connect(self.home/'state.db') as db:
+                db.execute("UPDATE sessions SET end_reason='compression' WHERE id=?",(self.session_id,))
+                db.execute('INSERT INTO sessions VALUES (?,NULL,?,?)',('compressed',self.session_id,time.time()))
+            self.session_id=self.agent.session_id='compressed'
+        with sqlite3.connect(self.home/'state.db') as db:
+            db.execute("INSERT INTO messages(session_id,role,content,timestamp) VALUES (?,'assistant',?,?)",(self.session_id,'answer:'+text,time.time()))
+        self._last_turn_result={'exit_code':0}
+        return 'answer:'+text
+''', encoding='utf-8')
+    try:
+        yield (*fake_installation, pool)
+    finally:
+        pool.close()
+
+
+def test_resident_turns_keep_native_process_and_separate_logs(resident_installation):
+    store, events, pool = resident_installation
+    first = runtime.run_hermes('p', 'one', execution_id='e', attempt_id='a', store=store, backend='pipe', persistent=True)
+    assert first['exit_code'] == 0, first
+    process = pool.entries['e'][0]
+    first_result = process.channel.receive('turn00000001','completed')
+    second = runtime.run_hermes('p', 'two', session_id=first['session_id'], execution_id='e', attempt_id='b', store=store, backend='pipe', persistent=True)
+    second_result = process.channel.receive('turn00000002','completed')
+    assert second['process_retained'] and second['output'] == 'answer:two'
+    assert first_result['agent_id'] == second_result['agent_id']
+    assert first_result['pid'] == second_result['pid']
+    assert store.read_output('a')['done'] and store.read_output('b')['done']
+    assert 'native-output:two' not in store.read_output('a')['data']
+    assert 'native-output:one' not in store.read_output('b')['data']
+    assert not any(name=='terminal.stage' and data['phase']=='process_exited' for name,data in events)
+    with pytest.raises(RuntimeError,match='SESSION_NOT_OWNED'):
+        runtime.SessionLease(runtime.ROOT/'.hermes/profiles/p',second['session_id'])
+
+
+def test_resident_dead_process_resumes_original_session(resident_installation):
+    store, events, pool = resident_installation
+    first = runtime.run_hermes('p', 'one', execution_id='e', attempt_id='a', store=store, backend='pipe', persistent=True)
+    previous = pool.entries['e'][0]
+    previous.close()
+    second = runtime.run_hermes('p', 'two', session_id=first['session_id'], execution_id='e', attempt_id='b', store=store, backend='pipe', persistent=True)
+    assert second['exit_code']==0 and second['session_id']==first['session_id']
+    assert pool.entries['e'][0].pid != previous.pid
+    assert next(r['data'] for r in store.read_records('b') if r['kind']=='lifecycle')['mode']=='resume'
+
+
+@pytest.mark.parametrize('failure',['die','stall'])
+def test_resident_missing_receipt_or_cancel_is_not_success(resident_installation,failure):
+    store,events,pool=resident_installation
+    cancel=threading.Event()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as workers:
+        future=workers.submit(runtime.run_hermes,'p',failure,execution_id='e',attempt_id='a',store=store,backend='pipe',persistent=True,cancel=cancel,inactivity_timeout=10)
+        if failure=='stall':
+            end=time.monotonic()+15
+            while time.monotonic()<end:
+                if any(name=='terminal.output' and 'native-output:stall' in data['data'] for name,data in events):break
+                time.sleep(.05)
+            cancel.set()
+        result=future.result(timeout=20)
+    assert result['termination_reason']==('cancelled' if failure=='stall' else 'runtime_error')
+    assert result['infra_failure'] and not result['process_retained']
+    assert 'e' not in pool.entries
+
+
+def test_resident_busy_reentry_does_not_kill_the_active_turn(resident_installation):
+    store,events,pool=resident_installation
+    cancel=threading.Event()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as workers:
+        future=workers.submit(runtime.run_hermes,'p','stall',execution_id='e',attempt_id='a',store=store,backend='pipe',persistent=True,cancel=cancel,inactivity_timeout=20)
+        end=time.monotonic()+15
+        while time.monotonic()<end:
+            saved=pool.entries.get('e')
+            if saved and saved[0].current:break
+            time.sleep(.05)
+        process=pool.entries['e'][0]
+        try:
+            conflict=runtime.run_hermes('p','should not run',session_id=process.session_id,execution_id='e',attempt_id='b',store=store,backend='pipe',persistent=True)
+            assert conflict['termination_reason']=='session_busy'
+            assert process.alive() and process.current is not None
+        finally:
+            cancel.set()
+        assert future.result(timeout=20)['termination_reason']=='cancelled'
+
+
+def test_resident_compression_retains_new_session_lease(resident_installation):
+    store,events,pool=resident_installation
+    result=runtime.run_hermes('p','compress',execution_id='e',attempt_id='a',store=store,backend='pipe',persistent=True)
+    assert result['session_id']=='compressed' and result['exit_code']==0
+    with pytest.raises(RuntimeError,match='SESSION_NOT_OWNED'):
+        runtime.SessionLease(runtime.ROOT/'.hermes/profiles/p','compressed')
+    result=runtime.run_hermes('p','next',session_id='compressed',execution_id='e',attempt_id='b',store=store,backend='pipe',persistent=True)
+    assert result['exit_code']==0 and result['output']=='answer:next'
 
 
 def test_compression_does_not_replay_messages_from_stale_breadcrumb(fake_installation):

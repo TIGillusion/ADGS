@@ -449,7 +449,7 @@ def _sync_recovery_database(source, destination, allowed_sessions):
 def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                inactivity_timeout=1800, session_id=None, execution_id=None,
                attempt_id=None, run_id=None, task_id=None, live_log=None,
-               backend=None, store=None, cancel=None, control_tools=None):
+               backend=None, store=None, cancel=None, control_tools=None, persistent=None):
     store = store or terminal_store
     from core.execution_store import WORKER_HOLD_REASON, recovery_grant, worker_launch_on_hold
     held = worker_launch_on_hold(store.root)
@@ -508,6 +508,14 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
         # to the medium-integrity helper's ConPTY and is not usable by that child.
         backend = "pipe"
     proc = job = lease = None
+    resident = None
+    resident_owned = False
+    resident_result = None
+    keep_resident = False
+    # Enabled by rollout after the CEO bridge and runtime checks are complete.
+    use_resident = (persistent if persistent is not None else os.environ.get("ADGS_HERMES_RESIDENT") == "1") and not grant and not control_tools
+    from core.hermes_process import ResidentProcess, resident_pool
+    resident_identity = (str(store.root.resolve()), str(profile_home.resolve()), task_workspace, model, backend)
     session_leases = {}
     threads = []
     chunks = []
@@ -561,12 +569,16 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             raise AttemptInterrupted("cancelled", "Cancelled before launch")
         if backend not in {"conpty", "pipe"}:
             raise RuntimeError(f"Unsupported Hermes backend: {backend}")
-        if session_id:
+        if use_resident:
+            resident = resident_pool.get(execution_id, resident_identity, session_id)
+            if resident:
+                session_leases = resident.session_leases
+        if session_id and not resident:
             _validate_resume(profile_home, session_id)
             lease = SessionLease(profile_home, session_id)
             session_leases[session_id] = lease
         # Recovery needs the source wrapper's launch gate and turn receipts.
-        frozen = None if grant or control_tools or (os.environ.get("ADGS_HERMES_ROLE_GUARD", "1") == "1"
+        frozen = None if use_resident or grant or control_tools or (os.environ.get("ADGS_HERMES_ROLE_GUARD", "1") == "1"
             and hermes_source_available()) else hermes_frozen_exe()
         if frozen:
             # 打包版：直接执行冻结 CLI（worker 包装层不适用，见 hermes_frozen_exe）
@@ -614,9 +626,46 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             for key in ("ADGS_CONTROL_TOKEN", "ADGS_RUNTIME_TOKEN", "ADGS_RUNTIME_NONCE"):
                 env.pop(key, None)
             cmd = [sys.executable, "-u", str(ROOT / "core" / "windows_worker.py"), str(gate), *cmd]
-        if os.name == "nt":
+        if use_resident:
+            with resident_pool.lock:
+                if resident is None:
+                    # Recheck under the pool lock: two simultaneous starts of a
+                    # new execution must not create two native agents.
+                    if execution_id in resident_pool.entries:
+                        raise RuntimeError("SESSION_NOT_OWNED: resident already starting")
+                    resident = ResidentProcess(cmd, cwd=cwd, env=env, directory=directory / "resident",
+                                               gate=gate, backend=backend, session_id=session_id)
+                    resident_owned = True
+                    resident.session_leases = session_leases
+                    resident_pool.add(execution_id, resident_identity, resident)
+                    resident.router.outside = feed
+            while not resident.ready():
+                if cancellation.is_set():
+                    raise AttemptInterrupted("cancelled", "Cancelled during Hermes initialization")
+                if not resident.alive() or resident.reader_error:
+                    raise RuntimeError(resident.reader_error or "Hermes exited during initialization")
+                if time.monotonic() - started > inactivity_timeout:
+                    raise AttemptInterrupted("inactivity_timeout", "Hermes initialization made no progress")
+                time.sleep(.05)
+            with resident.lock:
+                if resident.current is not None:
+                    raise RuntimeError("SESSION_NOT_OWNED: resident turn already active")
+                resident_owned = True
+                observed_session = resident.session_id
+                if observed_session not in session_leases:
+                    session_leases[observed_session] = SessionLease(profile_home, observed_session)
+                resident.router.outside = lambda text: None
+                resident.begin(instruction, feed, environment={
+                    "ADGS_CURRENT_TASK_FILE": str(task_file),
+                    "ADGS_COORDINATOR_FLAG": str(coordinator_flag),
+                    "ADGS_HERMES_RECEIPT": str(receipt)})
+            proc = resident.proc
+            alive = resident.alive
+        elif os.name == "nt":
             job = WindowsJob()
-        if backend == "conpty":
+        if use_resident:
+            pass
+        elif backend == "conpty":
             if os.name != "nt":
                 raise RuntimeError("ConPTY requires Windows")
             env["PYWINPTY_BACKEND"] = "0"
@@ -654,10 +703,19 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             raise AttemptInterrupted("cancelled", "Cancelled before Hermes initialization")
         gate.touch()  # Wrapper cannot import Hermes/create children before assignment.
         store.update(attempt_id, status="running")
-        _emit("terminal.started", **ids, backend=backend, cols=120, rows=36, pid=proc.pid)
+        continuation = "continue" if resident and resident.sequence > 1 else "resume" if session_id else "start"
+        store.append(attempt_id, "lifecycle", {"mode": continuation, "persistent": bool(resident), "pid": proc.pid})
+        _emit("terminal.started", **ids, backend=backend, cols=120, rows=36, pid=proc.pid,
+              persistent=bool(resident), continuation=continuation)
         last_poll = 0
         while alive():
             now = time.monotonic()
+            if resident:
+                if resident.reader_error:
+                    raise RuntimeError("Resident output failed: " + resident.reader_error)
+                resident_result = resident.result()
+                if resident_result is not None:
+                    break
             if control_tools and decision.is_file():
                 reason, error = "decision_ready", ""
                 break
@@ -760,7 +818,20 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 reason, error = "input_required", "Hermes startup requires operator input"
                 break
             time.sleep(0.2)
-        if reason == "decision_ready":
+        if resident and reason == "completed" and resident_result is not None:
+            resident_result = resident.finish()
+            observed_session = resident.session_id
+            if observed_session not in session_leases:
+                session_leases[observed_session] = SessionLease(profile_home, observed_session)
+            final_response = resident_result.get("output") or final_response
+            exit_code = int(resident_result["exit_code"])
+            keep_resident = True
+            _emit("terminal.stage", **ids, phase="turn_completed", elapsed_seconds=round(time.monotonic()-started, 3))
+        elif resident:
+            if reason == "completed":
+                reason, error = "runtime_error", "Hermes process exited without a complete turn receipt; input retained for recovery"
+            resident_pool.discard(execution_id, resident)
+        elif reason == "decision_ready":
             if job:
                 job.terminate()
             elif proc is not None:
@@ -783,13 +854,15 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 job.terminate()
             elif alive():
                 os.killpg(proc.pid, signal.SIGKILL)
-        _emit("terminal.stage", **ids, phase="process_exited", elapsed_seconds=round(time.monotonic()-started, 3))
-        exit_code = int(proc.exitstatus if backend == "conpty" else proc.wait(timeout=5))
+        if not resident:
+            _emit("terminal.stage", **ids, phase="process_exited", elapsed_seconds=round(time.monotonic()-started, 3))
+            exit_code = int(proc.exitstatus if backend == "conpty" else proc.wait(timeout=5))
         if reason == "decision_ready":
             reason, exit_code = "completed", 0
         if job:
             job.terminate()
-        _emit("terminal.stage", **ids, phase="tree_reaped", elapsed_seconds=round(time.monotonic()-started, 3))
+        if not resident:
+            _emit("terminal.stage", **ids, phase="tree_reaped", elapsed_seconds=round(time.monotonic()-started, 3))
         for thread in threads:
             thread.join(2)
         _emit("terminal.stage", **ids, phase="output_drained", elapsed_seconds=round(time.monotonic()-started, 3))
@@ -823,7 +896,10 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
     finally:
         # Reap ALL descendants before releasing an execution slot, including after
         # a normal CLI exit that left a background tool process running.
-        if job:
+        if resident:
+            if resident_owned and not keep_resident:
+                resident_pool.discard(execution_id, resident)
+        elif job:
             try:
                 job.terminate()
             except Exception:
@@ -840,16 +916,17 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
-        if proc is not None and backend == "conpty":
+        if not resident and proc is not None and backend == "conpty":
             try:
                 proc.close(force=True)
             except Exception:
                 pass
-        _emit("terminal.stage", **ids, phase="terminal_closed", elapsed_seconds=round(time.monotonic()-started, 3))
+        _emit("terminal.stage", **ids, phase="waiting_input" if keep_resident else "terminal_closed", elapsed_seconds=round(time.monotonic()-started, 3))
         for thread in threads:
             thread.join(2)
-        for lease in session_leases.values():
-            lease.close()
+        if not resident:
+            for lease in session_leases.values():
+                lease.close()
         if grant and observed_session and (profile_home / "state.db").is_file():
             # Only the session database returns to the original profile. The
             # restricted process cannot change the real profile configuration.
@@ -884,4 +961,4 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
         answer += "\n\n[恢复会话已保存在隔离副本。原 profile 中其他会话已保留。]"
     if published:
         answer += "\n\n[平台已核对并发布的新产物]\n" + "\n".join(published)
-    return {"output": utf8_safe(answer), "exit_code": exit_code if reason == "completed" else exit_code if reason == "process_error" else -1, "error": error, "session_id": observed_session, "termination_reason": reason, "infra_failure": infrastructure, "terminal_path": str(output_file), **ids}
+    return {"output": utf8_safe(answer), "exit_code": exit_code if reason == "completed" else exit_code if reason == "process_error" else -1, "error": error, "session_id": observed_session, "termination_reason": reason, "infra_failure": infrastructure, "terminal_path": str(output_file), "process_retained": keep_resident, **ids}
