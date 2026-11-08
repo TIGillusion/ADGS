@@ -1,0 +1,6 @@
+{
+  "username": "YOUR_XIAOMI_ACCOUNT",
+  "password": "YOUR_XIAOMI_PASSWORD",
+  "account_base": "https://account.xiaomi.com",
+  "api_base": "https://api.io.mi.com"
+}

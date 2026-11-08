@@ -5,6 +5,8 @@
 /config/AI_config.json
 /config/settings_overrides.json
 /skills/mijia-home/mijia_config.json
+/skills/mijia-home/mijia_session.json
+/releases/
 *.pem
 *.pfx
 *.key

@@ -13,34 +13,33 @@ description: 米家(Mi Home)生态智能设备云控制技能。通过小米云 
 配套脚本（纯标准库，无需安装依赖）：
 
 ```bash
-python D:\user_illusion\test\ADGS\skills\mijia-home\mijia.py <命令> [参数] [--json]
+python skills/mijia-home/mijia.py <命令> [参数] [--json]
 ```
 
-凭据与环境配置已就绪：`D:\user_illusion\test\ADGS\skills\mijia-home\mijia_config.json`
-（账号、服务地址都在里面，**不要向用户索要凭据，一切以此配置为准**；也不要把密码打进报告）。
+在新设备使用前，复制同目录 mijia_config.example.json 为 mijia_config.json，并自行填写账号与服务配置。也可用 MIJIA_CONFIG 指向配置文件。发布包不含真实配置或登录会话；未配置时不执行设备控制。不要把密码和登录令牌写入报告。
 
 命令一览（`--json` 可得结构化输出）：
 
 ```bash
 # 1) 验证登录链路
-python D:\...\mijia.py login
+python skills/mijia-home/mijia.py login
 
 # 2) 设备盘点：名称/型号/did/在线状态
-python D:\...\mijia.py list
+python skills/mijia-home/mijia.py list
 
 # 3) 读属性（可一次读多个 siid/piid）
-python D:\...\mijia.py read 测试插座 2 1
-python D:\...\mijia.py read 客厅人体存在传感器 2 1 2 2
+python skills/mijia-home/mijia.py read 测试插座 2 1
+python skills/mijia-home/mijia.py read 客厅人体存在传感器 2 1 2 2
 
 # 4) 写属性（value 支持 true/false/数字/字符串）
-python D:\...\mijia.py write 测试插座 2 1 true
+python skills/mijia-home/mijia.py write 测试插座 2 1 true
 
 # 5) 插座/灯快捷开关（= 写 siid2/piid1，自带 前读→写→读回 三段证据）
-python D:\...\mijia.py quick 测试插座 on
-python D:\...\mijia.py quick 测试插座 off
+python skills/mijia-home/mijia.py quick 测试插座 on
+python skills/mijia-home/mijia.py quick 测试插座 off
 
 # 6) 逃生舱：任意已签名 POST（如新接口路径）
-python D:\...\mijia.py api /app/home/deviceapi '{"command":"read","did":"1187034261","miSpec":"[{\"siid\":2,\"piid\":1}]"}'
+python skills/mijia-home/mijia.py api /app/home/deviceapi '{"command":"read","did":"1187034261","miSpec":"[{\"siid\":2,\"piid\":1}]"}'
 ```
 
 设备参数可用**设备名（子串匹配）或 did**；名字有歧义时报错并列出候选，此时改用 did。
