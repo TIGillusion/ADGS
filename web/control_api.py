@@ -229,11 +229,15 @@ def create_control_api(host):
         rows = [{**row, **runtime_fields(row['execution_id'], row.get('node_id'), row)}
                 for row in host.execution_store.session_states(session)]
         completion = None
+        accepted_finishes = set()
         # Never present a prior task's finish as a new user request's result.
         for message in reversed(saved.get('history') or []):
             if message.get('role') == 'user':break
+            if message.get('role') == 'tool' and isinstance(message.get('content'), str) and message['content'] in {
+                    '（最终汇报已输出给用户，任务结束）', '（受阻原因已向用户汇报，原任务待恢复）'}:
+                accepted_finishes.add(message.get('tool_call_id'))
             for call in reversed(message.get('tool_calls') or []):
-                if call.get('function', {}).get('name') != 'finish':continue
+                if call.get('function', {}).get('name') != 'finish' or call.get('id') not in accepted_finishes:continue
                 try:
                     args = call['function']['arguments']
                     args = json.loads(args) if isinstance(args, str) else args

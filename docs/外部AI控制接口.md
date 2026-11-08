@@ -218,7 +218,7 @@ CLI 的 request 命令面向 JSON 接口，文件/SSE 使用支持流式响应�
 
 ### 运行快照与用量（2026-11-08新增）
 
-建议控制Agent轮询 `/sessions/{session}/state`，用 `session.busy` 判断是否还在工作，结合 `completion.status` 与执行结果判断完成质量。`completed`、`blocked`、`answered` 含义不同；`completion=null` 表示当前输入之后尚无finish，旧任务的finish不会冒充新输入的结果。`runtime` 是系统全局五名额等并发统计，`executions` 只属于目标会话。详细任务书、工具事件和终端仍通过已有详情与下载接口读取。
+建议控制Agent轮询 `/sessions/{session}/state`，用 `session.busy` 判断是否还在工作，结合 `completion.status` 与执行结果判断完成质量。`completed`、`blocked`、`answered` 含义不同；`completion=null` 表示当前输入之后尚无被调度器接受的finish，旧任务或被拒绝的finish不会冒充完成结果。`runtime` 是系统全局五名额等并发统计，`executions` 只属于目标会话。详细任务书、工具事件和终端仍通过已有详情与下载接口读取。
 
 `/usage` 中 `input_tokens` 为未命中缓存的输入，`cache_read_tokens` 为命中输入，`cache_write_tokens` 为缓存写入；`total_input_tokens` 为三者之和。`cache_hit_rate_pct=100*cache_read_tokens/total_input_tokens`，无输入时为null。字段来自原生数据库，不是按文本长度估算。相同profile+原生session只统计一次，累计计数不能按attempt相加。读取范围为归属于该ADGS会话的持久执行与原生会话、CEO记录；不包含独立路由/验收等辅助模型调用。`partial=true` 时检查 `unavailable`，不能把缺失记录当零消耗；`cache_reporting=no_cache_tokens_reported` 可能是未命中，也可能提供方未上报缓存数据。正在运行时统计为最终一致快照，结束后再读得到稳定值。
 

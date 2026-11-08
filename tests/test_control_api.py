@@ -50,7 +50,8 @@ def test_compact_state_preserves_runtime_flags_and_current_completion(control,mo
     assert result.json['executions'][0]['waiting_for_slot'] is True
     assert result.json['session']['phase']=='paused' and result.json['completion'] is None
     p=tmp/'data/sessions/chat-a.json';saved=json.loads(p.read_text())
-    saved['history']+=[{'role':'assistant','tool_calls':[{'function':{'name':'finish','arguments':json.dumps({'status':'blocked','summary':'需要修复'})}}]}]
+    saved['history']+=[{'role':'assistant','tool_calls':[{'id':'finish-1','function':{'name':'finish','arguments':json.dumps({'status':'blocked','summary':'需要修复'})}}]},
+                       {'role':'tool','tool_call_id':'finish-1','content':'（受阻原因已向用户汇报，原任务待恢复）'}]
     saved['session_state']['_ceo_activity']={'phase':'waiting_children'}
     p.write_text(json.dumps(saved),encoding='utf-8')
     value=client.get('/api/v1/sessions/chat-a/state',headers=headers).json
@@ -59,6 +60,16 @@ def test_compact_state_preserves_runtime_flags_and_current_completion(control,mo
     assert client.get('/api/v1/sessions/chat-a/state',headers=headers).json['completion'] is None
     assert client.get('/api/v1/sessions/missing/state',headers=headers).status_code==404
     assert client.get('/api/v1/sessions/chat-a/state').status_code==401
+
+
+def test_compact_state_does_not_publish_rejected_or_unacknowledged_finish(control):
+    web,client,headers,tmp=control;p=tmp/'data/sessions/chat-a.json';saved=json.loads(p.read_text())
+    saved['history'].append({'role':'assistant','tool_calls':[{'id':'rejected','function':{'name':'finish','arguments':'{"status":"completed","summary":"尚未验收"}'}}]})
+    p.write_text(json.dumps(saved),encoding='utf-8')
+    assert client.get('/api/v1/sessions/chat-a/state',headers=headers).json['completion'] is None
+    saved['history'].append({'role':'tool','tool_call_id':'rejected','content':'{"error":"本轮没有已验收的任务证据"}'})
+    p.write_text(json.dumps(saved),encoding='utf-8')
+    assert client.get('/api/v1/sessions/chat-a/state',headers=headers).json['completion'] is None
 
 
 def test_usage_is_scoped_and_deduplicates_saved_ceo_and_attempts(control,monkeypatch):
