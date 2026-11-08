@@ -85,3 +85,30 @@ def test_two_concrete_outputs_are_both_required_without_filesystem_guessing(tmp_
     result=evidence('生成 audit.json；分别运行 --output one/audit.json；--output two/audit.json。',str(tmp_path))
     assert '存在: one/audit.json' in result and '缺失: two/audit.json' in result
     assert '缺失: audit.json' not in result
+
+
+@pytest.mark.parametrize('reference',['绝对路径与完整内容','的实际路径与其中 summary 字段内容摘录'])
+def test_descriptive_deliverable_reference_uses_unique_declared_write_path(tmp_path,evidence,reference):
+    task=(f'## 交付物\n- B.json {reference}\n\n'
+          '## 写路径约束\n[".adgs_artifacts/check/B.json"]')
+    result=evidence(task,str(tmp_path))
+    assert '缺失: .adgs_artifacts/check/B.json' in result
+    target=tmp_path/'.adgs_artifacts/check/B.json'
+    target.parent.mkdir(parents=True);target.write_text('{}')
+    result=evidence(task,str(tmp_path))
+    assert '存在: .adgs_artifacts/check/B.json' in result
+    assert '缺失' not in result
+
+
+@pytest.mark.parametrize('deliverable',['B.json','./B.json','B.json 工作区根目录文件'])
+def test_literal_root_deliverable_stays_strict_with_nested_write_target(tmp_path,evidence,deliverable):
+    target=tmp_path/'nested/B.json';target.parent.mkdir();target.write_text('{}')
+    task=f'## 交付物\n- {deliverable}\n\n## 写路径约束\n["nested/B.json"]'
+    assert '缺失:' in evidence(task,str(tmp_path))
+
+
+@pytest.mark.parametrize('targets',['["one/B.json", "two/B.json"]','{"path":"one/B.json"}','invalid'])
+def test_descriptive_path_never_guesses_ambiguous_or_invalid_contract(tmp_path,evidence,targets):
+    target=tmp_path/'one/B.json';target.parent.mkdir();target.write_text('{}')
+    task=f'## 交付物\n- B.json 绝对路径与完整内容\n\n## 写路径约束\n{targets}'
+    assert '缺失: B.json' in evidence(task,str(tmp_path))

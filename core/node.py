@@ -806,6 +806,23 @@ class NODE:
             if not m:
                 continue
             token = m.group(0).strip('`\'"').rstrip('.,;，。、')
+            # "B.json 绝对路径与完整内容" requests a reference to the
+            # declared output, not an additional B.json in the workspace root.
+            # Resolve only this descriptive form against one explicit write
+            # target. Never search disk or relax a literal root deliverable.
+            suffix = item[m.end():].lstrip()
+            if not re.search(r'[/\\]', token) and re.match(
+                    r'(?:的)?(?:绝对|相对|完整|实际)?(?:文件)?路径(?:\s|与|和|及|$)', suffix):
+                try:
+                    targets = json.loads(task_section(task_md, "写路径约束") or "[]")
+                except (ValueError, TypeError):
+                    targets = []
+                if isinstance(targets, list):
+                    matches = {target for target in targets if isinstance(target, str)
+                               and re.search(r'[/\\]', target)
+                               and re.split(r'[/\\]', target)[-1] == token}
+                    if len(matches) == 1:
+                        token = matches.pop()
             candidate = Path(token)
             if not candidate.is_absolute():
                 candidate = Path(workspace or ".") / candidate
