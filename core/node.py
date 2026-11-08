@@ -956,7 +956,7 @@ class NODE:
                 return self._unjudged(task_md, {**log, 'output':'\n\n'.join(dict.fromkeys(evidence_outputs)), 'session_id':session_id,'termination_reason':'wall_timeout'},
                                       'interrupted', '任务总预算耗尽，终结报告尚未补齐；原会话与已有成果保留，可用 continue_task 续接。')
             confirm_rounds += 1
-            bus.emit("node.brain", node=self.node_id, profile=self.profile, action="resume",
+            bus.emit("node.brain", node=self.node_id, profile=self.profile, action="continue",
                      detail=f"任务未终结（缺申报或报告不完整），自动注入确认（第 {confirm_rounds} 次）")
             resumed = self._resume_hermes(self._termination_confirm_instruction(output), session_id, timeout)
             if resumed.get('output'):

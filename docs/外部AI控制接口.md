@@ -134,7 +134,11 @@ Content-Type: application/json
 python tools/adgs_control.py resume auto-20261102-214253-1e88a3 --execution 2ae78134d64c4abe9876e36f67b09366 --key original-task-resume-001
 ```
 
-恢复后核对原 execution_id 出现新的 attempt，且 profile 一致。已有 Hermes 会话的续接阶段为 `resume`。启动前故障恢复后的首次启动阶段为 `execute`。Hermes 后续压缩可能派生新 session_id，此时应按原执行及会话谱系跟踪。
+恢复后核对原 execution_id 出现新的 attempt，且 profile 一致。常驻模式下以 `attempts[].continuation` 区分：`start` 为首次启动，`continue` 为复用存活的原进程，`resume` 为进程确实退出后恢复已有历史。执行的 `phase` 表示当前调度阶段，不能仅凭它推断是否重启过进程。Hermes 后续压缩可能派生新 session_id，此时应按原执行及会话谱系跟踪。
+
+正常发新消息、补充要求或返工，不需要反复调用 `/resume`，也不要模拟终端逐字键入。使用本会话的 `/messages`（默认 `queue`，需要在当前批次结果后引导时用 `interrupt`），由 CEO 调用 `continue_task`，或由负责人调用 `continue_delegation`。运行时会完整、原子地交接消息；活着的原进程自动继续，只有退出或故障时才恢复历史。`/resume` 仍用于空闲会话中断后的显式恢复请求。
+
+`GET /executions/{execution_id}` 额外返回 `hermes_process_alive`、`hermes_process_state` 和 `hermes_process_pid`。状态 `working` 表示处理本轮，`waiting_dispatch` 表示 CEO 已提交决策并等待调度结果，`waiting_input` 表示本轮完成后仍保持进程，`exited` 表示进程已退出。PID 是 Windows 启动进程的 PID，不一定等于原生 Python 子进程 PID。进程空闲存活不等于业务忙，不占工作名额；某个 attempt 完成也不等于整个 CEO 任务完成。请同时核对会话 `busy/task_done`、队列和执行状态，不要用进程是否存在单独判断任务完成。
 
 ## 6. 队列、日志与产出物
 
