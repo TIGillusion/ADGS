@@ -28,12 +28,17 @@ def test_native_decision_boundary_never_masks_failed_tool_persistence(monkeypatc
     from types import ModuleType
     import core.hermes_control as control
     agent=ModuleType('agent');loop=ModuleType('agent.conversation_loop')
+    executor=ModuleType('agent.tool_executor')
+    executor._SEQUENTIAL_DEADLINE_EXEMPT_TOOLS=frozenset({'delegate_task'})
+    agent.tool_executor=executor
     loop.run_tool_round=lambda agent,**kw:SimpleNamespace(action='continue',failed=kw['failed'],final_response=None)
     agent.conversation_loop=loop
     monkeypatch.setitem(sys.modules,'agent',agent)
     monkeypatch.setitem(sys.modules,'agent.conversation_loop',loop)
     monkeypatch.setattr(control,'active',SimpleNamespace(resolved=True))
-    control.install_decision_boundary()
+    control.install_decision_boundary({'continue_task','dispatch'})
+    assert executor._SEQUENTIAL_DEADLINE_EXEMPT_TOOLS=={'delegate_task','continue_task','dispatch'}
+    assert 'terminal' not in executor._SEQUENTIAL_DEADLINE_EXEMPT_TOOLS
     assert loop.run_tool_round(None,failed=True).action=='continue'
     result=loop.run_tool_round(None,failed=False)
     assert result.action=='break' and result.final_response==''

@@ -3,6 +3,38 @@ import pytest
 from core.hermes_process import OutputRouter,TurnOutput,ResidentPool
 
 
+def test_ceo_early_completion_never_claims_external_result_was_received():
+    import threading
+    from core.hermes_process import ResidentProcess
+    published=[]
+    process=SimpleNamespace(lock=threading.RLock(),decision=lambda:{'name':'dispatch'},
+        result=lambda:{'exit_code':0},current=('turn00000001',None),
+        channel=SimpleNamespace(publish=lambda *args:published.append(args)))
+    with pytest.raises(RuntimeError,match='ended before receiving'):
+        ResidentProcess.resolve_decision(process,'real outcome')
+    assert published==[]
+
+
+@pytest.mark.parametrize('acknowledged',[False,True])
+def test_ceo_settlement_requires_explicit_child_receipt(acknowledged):
+    import threading
+    from core.hermes_process import ResidentProcess
+    published=[];finished=[]
+    result={'exit_code':0,'control_result_received':acknowledged}
+    process=SimpleNamespace(lock=threading.RLock(),decision=lambda:{'name':'dispatch'},
+        result=lambda:result if published else None,current=('turn00000001',None),
+        channel=SimpleNamespace(publish=lambda *args:published.append(args)),
+        finish=lambda:finished.append(True) or result)
+    if acknowledged:
+        assert ResidentProcess.resolve_decision(process,'真实完整结果')==result
+        assert finished==[True]
+    else:
+        with pytest.raises(RuntimeError,match='did not acknowledge'):
+            ResidentProcess.resolve_decision(process,'真实完整结果')
+        assert finished==[]
+    assert published==[('turn00000001','tool-result',{'content':'真实完整结果'})]
+
+
 @pytest.mark.parametrize('chunk_size',[1,2,7,1000])
 def test_terminal_boundaries_survive_arbitrary_chunking(chunk_size):
     orphan=[];first=[];second=[]

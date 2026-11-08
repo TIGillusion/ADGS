@@ -52,11 +52,17 @@ def begin(cli, directory, turn_id, message):
     active = DecisionTurn(cli, directory, turn_id, message)
 
 
-def install_decision_boundary():
+def install_decision_boundary(tool_names=()):
     # Let native Hermes persist the real tool result, then settle its chat turn
     # without spending another model call before ADGS supplies the next input.
     # This keeps the same CLI/Agent and its canonical transcript intact.
-    from agent import conversation_loop
+    from agent import conversation_loop, tool_executor
+    # ADGS supervises these dispatcher waits, including child liveness and
+    # cancellation. A generic native tool deadline must not manufacture a
+    # timeout result while the durable external action is still running.
+    # Only registered CEO decisions are exempt; Worker tools keep their limits.
+    tool_executor._SEQUENTIAL_DEADLINE_EXEMPT_TOOLS = frozenset(
+        tool_executor._SEQUENTIAL_DEADLINE_EXEMPT_TOOLS) | frozenset(tool_names)
     original = conversation_loop.run_tool_round
 
     @functools.wraps(original)

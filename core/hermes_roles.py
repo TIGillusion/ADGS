@@ -56,7 +56,7 @@ def install_role_tools(task_file=None):
                 from . import hermes_control
             except ImportError:
                 import hermes_control
-            hermes_control.install_decision_boundary()
+            hermes_control.install_decision_boundary(names)
         from tools.registry import registry
         for tool in schemas:
             fn = tool["function"]

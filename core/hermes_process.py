@@ -181,6 +181,8 @@ class ResidentProcess:
         with self.lock:
             if self.decision() is None:
                 raise RuntimeError('No pending CEO decision to resolve')
+            if self.result() is not None:
+                raise RuntimeError('CEO turn ended before receiving its actual tool result; recovery is required')
             tid, _ = self.current
             self.channel.publish(tid, 'tool-result', {'content': content})
         deadline = time.monotonic()+timeout
@@ -190,6 +192,8 @@ class ResidentProcess:
             if time.monotonic() > deadline:
                 raise RuntimeError('CEO tool result was submitted but settlement is unconfirmed; do not resend')
             time.sleep(.05)
+        if self.result().get('control_result_received') is not True:
+            raise RuntimeError('CEO did not acknowledge its actual tool result; settlement is unconfirmed')
         return self.finish()
 
     def finish(self):

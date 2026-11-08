@@ -81,6 +81,7 @@ def serve(cli, directory, *, exit_code, poll_interval=.05, before_turn=None, aft
             'pid': os.getpid(), 'agent_id': id(agent), 'session_id': cli.session_id,
             'exit_code': exit_code(result), 'output': response or '',
             'error': str((result or {}).get('error') or '') if isinstance(result, dict) else 'No turn result',
+            'control_result_received': bool(hermes_control.active.resolved) if 'control_tools' in message else None,
             'usage': {key: result[key] for key in ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
                       if isinstance(result, dict) and isinstance(result.get(key), (int, float))},
         })
