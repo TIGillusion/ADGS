@@ -79,6 +79,9 @@ def main():
                 return None
             return original(provider_id)
         models.opencode_provider_family = family
+        if os.environ.get("ADGS_PERSISTENT_CHANNEL"):
+            from hermes_resident import install_resident_entry
+            install_resident_entry(os.environ["ADGS_PERSISTENT_CHANNEL"])
     logger = logging.getLogger("agent.conversation_loop")
     receipt = TurnReceipt()
     logger.addHandler(receipt)
