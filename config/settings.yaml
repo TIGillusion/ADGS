@@ -101,12 +101,12 @@ scoring:
 # 上下文压缩（2026-08-30：改为配置预写，不再启动时自动探测）
 # 此前 probe_context=true 会对三个模型逐一发 ~4MB 探测请求（force 忽略缓存），
 # vLLM 不通时每次启动卡 ~6 分钟、DeepSeek 白烧 token。现直接使用预写值：
-#   ceo_ctx_window    = deepseek-v4-flash 实测值（data/context_cache.json）
+#   ceo_ctx_window    = CEO 当前使用的上下文预算（256K）
 #   brain/worker_ctx  = qwen3.8-27b（vLLM 探测一直失败，保守取 32768；
 #                       若服务器实际支持更大可自行调大）
 compress:
   ctx_window: 32768       # 回退默认
-  ceo_ctx_window: 1048576 # CEO 模型上下文上限（deepseek-v4-flash）
+  ceo_ctx_window: 262144  # CEO 上下文预算（256K，适配 Qwen）
   brain_ctx_window: 32768 # 节点智能体（qwen3.8-27b）
   worker_ctx_window: 262144 # Hermes worker：当前 /v1/models 的 max_input_tokens 实测值
   trigger_ratio: 0.67     # 超过 67% 触发压缩

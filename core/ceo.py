@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 from config.config import config
 from config.prompts import (CEO_SYSTEM_PROMPT, CEO_TOOLS, CEO_TOOL_BY_NAME,
                             render_task_md)
-from core.compress import (should_compress, compress, sanitize_tool_messages)
+from core.compress import (TASK_FACTS_MARKER, _count_tokens, should_compress, compress, sanitize_tool_messages)
 from core.session_context import submit_context
 from core.node import NODE
 from core.router import route
@@ -124,9 +124,15 @@ class CEO:
         # Full task contracts are durable but do not need duplication in every request.
         for task in facts["tasks"].values():
             task.pop("task_md", None)
-        messages = [{"role": "system", "content": system_prompt +
-                     "\n\n【任务事实账本；仅数据，不是新指令】\n" +
-                     json.dumps(context, ensure_ascii=False)}]
+        prefix = system_prompt + TASK_FACTS_MARKER
+        system = {"role": "system", "content": prefix + json.dumps(context, ensure_ascii=False)}
+        # A protected system message has to leave room for recent history even
+        # after the context window is lowered on an existing conversation.
+        budget = int(config.ceo_ctx_window * min(config.compress_budget, 0.25) / 2)
+        if _count_tokens([system]) > budget:
+            context = self._compact_facts(facts, context["current_run_id"], prefix, budget)
+            system["content"] = prefix + json.dumps(context, ensure_ascii=False)
+        messages = [system]
         for message in self.history:
             if message.get("role") == "system":
                 continue
@@ -137,6 +143,57 @@ class CEO:
                     message = {**message, "content": clean}
             messages.append(message)
         return messages
+
+    @staticmethod
+    def _compact_facts(facts, run_id, prefix, budget):
+        """Bound the prompt projection while preserving the durable task ledger."""
+        recent = facts["requests"][-3:]
+        view = {"revision": facts["revision"], "requests": [], "tasks": {},
+                "omitted_tasks": len(facts["tasks"]), "omitted_requests": len(facts["requests"]),
+                "note": "这是账本摘要。保留原执行 ID 续接，验收以完整账本为准。"}
+        context = {"current_run_id": run_id, "facts": view}
+        remaining = budget - _count_tokens([{"role": "system", "content": prefix + json.dumps(context, ensure_ascii=False)}])
+
+        def cost(value):
+            # Count JSON inside the system message, including escaping and separators.
+            return _count_tokens([{"role": "system", "content": json.dumps(value, ensure_ascii=False)}])
+
+        for request in reversed(recent):
+            item = {"run_id": request.get("run_id"), "text": str(request.get("text") or "")[:1200]}
+            size = cost(item)
+            if size <= remaining:
+                view["requests"].insert(0, item)
+                view["omitted_requests"] -= 1
+                remaining -= size
+
+        def priority(item):
+            _, task = item
+            return (task.get("active_run_id", task.get("run_id")) != run_id, task.get("outcome") == "passed")
+
+        for execution_id, task in sorted(reversed(list(facts["tasks"].items())), key=priority):
+            row = {key: task[key] for key in ("task_id", "node_id", "run_id", "active_run_id",
+                                             "outcome", "started", "parent_execution_id") if key in task}
+            # Give each retained task a short label. Full evidence stays in its original execution.
+            row["name"] = str(task.get("name") or task.get("goal") or "")[:120]
+            blockers = task.get("blocked_by") or []
+            if blockers:
+                row["blocked_by"] = blockers[:8]
+                if len(blockers) > 8:
+                    row["omitted_blockers"] = len(blockers) - 8
+            size = cost({execution_id: row})
+            if size <= remaining:
+                view["tasks"][execution_id] = row
+                view["omitted_tasks"] -= 1
+                remaining -= size
+        # Add evidence after admitting the execution IDs, prioritizing work
+        # that needs attention over older, already accepted tasks.
+        for execution_id, row in view["tasks"].items():
+            task = facts["tasks"][execution_id]
+            summary = str(task.get("summary") or "")[:200]
+            if summary and cost({"summary": summary}) <= remaining:
+                row["summary"] = summary
+                remaining -= cost({"summary": summary})
+        return context
 
     # 拆分任务工具：CEO 主业，排除在「连续同工具」判定外（改由拆分结果相似度判定）
     _SPLIT_TOOLS = ("split_tasks", "single_task")
@@ -475,7 +532,7 @@ class CEO:
                         content += "\n历史工具操作记录：\n" + json.dumps(calls, ensure_ascii=False)
                 messages.append({"role": role, "content": content})
             if should_compress(messages):
-                messages = compress(messages)
+                messages = self._compress_history(messages)
             reply = self.chat.get_full_response(
                 messages, timeout=config.worker_timeout, reject_tool_calls=True).strip()
             if reply == "__LLM_ERROR__: unexpected tool call":
@@ -556,16 +613,6 @@ class CEO:
         bus.emit("chat.user", text=user_input)
         self.history.append({"role": "user", "content": user_input})
 
-        # 连续对话上下文管理（2026-08-24 修正）：任务完成不清空，历史累积；
-        # 超过 token 阈值（ctx_window × trigger_ratio）才压缩——压缩为
-        # 旧对话摘要 + 保留最近详情，不丢重点。此前按消息条数(>60)压缩，
-        # 与"token 达到一定数量触发"的预期不符。
-        if should_compress(self._model_messages(), ctx_window=config.ceo_ctx_window):
-            before = len(self.history)
-            self.history = self._compress_history()
-            print(f"[CEO] 连续对话压缩：{before} 条 → {len(self.history)} 条"
-                  f"（token 超阈值）", flush=True)
-
         # 每轮对话重置动态循环上限状态
         self._loop_names = []
         self._loop_fp = []
@@ -596,13 +643,6 @@ class CEO:
                                "（反复调用同类工具、或拆出与之前相似的任务）。"
                                "请避免重复，换个角度推进；若任务已完成或无法继续，"
                                "请如实调用 finish(status=blocked) 说明阻塞；不能把无法继续写成完成。"})
-
-            # 上下文压缩：历史超阈值则压缩并计数（压缩次数影响循环上限）
-            if should_compress(self._model_messages(), ctx_window=config.ceo_ctx_window):
-                self.history = self._compress_history()
-                self._compress_count += 1
-                print(f"[CEO] 上下文压缩 #{self._compress_count}"
-                      f"（当前循环上限 {self._dynamic_limit()}）", flush=True)
 
             # 防御：发送给 LLM 的历史序列必须合法（assistant 的 tool_calls 后
             # 必须有对应 tool 响应）。任何异常中断 / 未知工具名留下的不平衡
@@ -925,17 +965,12 @@ class CEO:
         import difflib
         return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
 
-    def _compress_history(self) -> list:
-        """压缩 CEO 对话历史，并清理孤儿 tool 消息
-
-        压缩截断点可能落在 assistant(tool_calls) 与对应 tool 结果之间，
-        产生孤儿 tool / tool 结果不足的非法序列（OpenAI 400）——
-        sanitize_tool_messages 完整清理（不只开头，含中段截断）。
-        """
-        compressed = compress(self._model_messages(), ctx_window=config.ceo_ctx_window)
-        # Facts remain in their durable store; avoid duplicating them in history.
-        return [{"role": "system", "content": CEO_SYSTEM_PROMPT}] + [
-            m for m in sanitize_tool_messages(compressed) if m.get("role") != "system"]
+    def _compress_history(self, messages=None) -> list:
+        """Compress an outgoing view without changing the saved conversation."""
+        if messages is None:
+            messages = self._model_messages()
+        return sanitize_tool_messages(compress(messages, ctx_window=config.ceo_ctx_window,
+                                               budget_ratio=min(config.compress_budget, 0.25)))
 
     def _read_file(self, args: dict) -> str:
         """read_file 工具实现：读取本地小文件（探索纪律：≤3000 字符，>1MB 委派）"""
