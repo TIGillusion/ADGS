@@ -501,6 +501,7 @@ class Store {
     const runEnded = ev.type === "system" && ev.data?.msg === "当前运行已结束";
     if (s.projectSupport && ev.session && (runStarted || runEnded)) {
       this.set({ projects: s.projects.map(p => ({...p,sessions:p.sessions.map(c => c.id === ev.session ? {...c,busy:runStarted} : c)})) });
+      if (runEnded) void this.refreshProjects();
     }
     if (s.projectSupport && !ev.session && FLOW_EVENTS.has(ev.type)) return;
     // 1) 会话观测 + 隔离过滤
@@ -1005,6 +1006,7 @@ class Store {
   async loadSession(name: string): Promise<void> {
     const version = ++this.loadVersion;
     this.lastRunEventAt=0; this.lastQueueEventAt=0;
+    const openedSession = this.state.projects.flatMap(project => project.sessions).find(session => session.id === name);
     if (this.state.projectSupport) {
       const current = this.state.viewSession;
       if (current && this.state.sessionMeta?.name === current) this.layouts.set(current, {graphManual:this.state.graphManual,graphLayoutMode:this.state.graphLayoutMode,graphFocusRound:this.state.graphFocusRound});
@@ -1066,6 +1068,16 @@ class Store {
         layoutCycle: null,
         graphManual: new Map(),
       });
+      if (this.state.projectSupport && openedSession?.completed) {
+        void api.sessionMarkViewed(name).then(() => {
+          this.set({projects: this.state.projects.map(project => ({
+            ...project,
+            sessions: project.sessions.map(session => session.id === name
+              ? {...session, completion_seen: true}
+              : session),
+          }))});
+        }).catch(() => { /* Viewing remains usable when the metadata endpoint is unavailable. */ });
+      }
       if (this.state.projectSupport) {
         const layout = this.layouts.get(name);
         if (layout) this.set(layout);

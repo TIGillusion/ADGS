@@ -47,12 +47,19 @@ class ProjectCatalog:
               created_at REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS sessions (
               id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
-              created_at REAL NOT NULL, updated_at REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0);''')
+              created_at REAL NOT NULL, updated_at REAL NOT NULL,
+              archived INTEGER NOT NULL DEFAULT 0,
+              completion_seen INTEGER NOT NULL DEFAULT 0);''')
             if 'archived' not in {row['name'] for row in connection.execute('PRAGMA table_info(projects)')}:
                 with connection:
                     connection.execute('BEGIN IMMEDIATE')
                     if 'archived' not in {row['name'] for row in connection.execute('PRAGMA table_info(projects)')}:
                         connection.execute('ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
+            if 'completion_seen' not in {row['name'] for row in connection.execute('PRAGMA table_info(sessions)')}:
+                with connection:
+                    connection.execute('BEGIN IMMEDIATE')
+                    if 'completion_seen' not in {row['name'] for row in connection.execute('PRAGMA table_info(sessions)')}:
+                        connection.execute('ALTER TABLE sessions ADD COLUMN completion_seen INTEGER NOT NULL DEFAULT 0')
             with connection:
                 yield connection
         finally:
@@ -96,7 +103,7 @@ class ProjectCatalog:
                 raise KeyError('项目不存在')
             if project['archived']:
                 raise ValueError('请先恢复已归档的项目')
-            db.execute('INSERT INTO sessions VALUES (:id,:project_id,:title,:created_at,:updated_at,:archived)', item)
+            db.execute('INSERT INTO sessions (id,project_id,title,created_at,updated_at,archived,completion_seen) VALUES (:id,:project_id,:title,:created_at,:updated_at,:archived,0)', item)
         return self.session(item['id'])
 
     def discard_new_session(self, session_id):
@@ -116,11 +123,15 @@ class ProjectCatalog:
                 raise KeyError('项目不存在')
         return self.project(project_id)
 
-    def update_session(self, session_id, title=None, archived=None):
+    def update_session(self, session_id, title=None, archived=None, completion_seen=None):
         if title is not None:
             title = self.label(title)
         if archived is not None and type(archived) is not bool:
             raise ValueError('archived 必须是布尔值')
+        if completion_seen is not None and type(completion_seen) is not bool:
+            raise ValueError('completion_seen 必须是布尔值')
+        if title is None and archived is None and completion_seen is None:
+            raise ValueError('请提供会话名称、归档状态或查看状态')
         with self.lock, self.connect() as db:
             if not db.execute('SELECT 1 FROM sessions WHERE id=?', (session_id,)).fetchone():
                 raise KeyError('会话不存在')
@@ -128,6 +139,8 @@ class ProjectCatalog:
                 db.execute('UPDATE sessions SET title=?,updated_at=? WHERE id=?', (title,time.time(),session_id))
             if archived is not None:
                 db.execute('UPDATE sessions SET archived=?,updated_at=? WHERE id=?', (int(archived),time.time(),session_id))
+            if completion_seen is not None:
+                db.execute('UPDATE sessions SET completion_seen=? WHERE id=?', (int(completion_seen),session_id))
         return self.session(session_id)
 
     def discover(self, directory, workspace):
@@ -152,7 +165,7 @@ class ProjectCatalog:
                         created = legacy_session_created_at(path.stem, stamp)
                         db.execute('INSERT OR IGNORE INTO projects (id,name,workspace,created_at) VALUES (?,?,?,?)',
                                    (project_id,label,directory_path,created))
-                        db.execute('INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?,0)',(path.stem,project_id,first[:80] or path.stem,created,stamp))
+                        db.execute('INSERT OR IGNORE INTO sessions (id,project_id,title,created_at,updated_at,archived,completion_seen) VALUES (?,?,?,?,?,0,0)',(path.stem,project_id,first[:80] or path.stem,created,stamp))
 
                     except (ValueError,OSError,TypeError,AttributeError):
                         continue
@@ -178,7 +191,7 @@ class ProjectCatalog:
 
     def touch(self, session_id, text):
         with self.lock, self.connect() as db:
-            db.execute("UPDATE sessions SET updated_at=?, title=CASE WHEN title='新会话' THEN ? ELSE title END WHERE id=?",(time.time(),text[:80],session_id))
+            db.execute("UPDATE sessions SET updated_at=?, completion_seen=0, title=CASE WHEN title='新会话' THEN ? ELSE title END WHERE id=?",(time.time(),text[:80],session_id))
 
 
 project_catalog = ProjectCatalog()

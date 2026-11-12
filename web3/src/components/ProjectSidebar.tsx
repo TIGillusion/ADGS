@@ -69,7 +69,7 @@ export function ProjectSidebar({footer,onInspector,onNavigate}: {footer:ReactNod
             </div>}
             {!collapsed&&<div className="project-chats">{chats.map(c=><div key={c.id}>
               <div data-session-id={c.id} className={`project-chat ${selected===c.id?'selected':''}`}>
-                <button className="project-chat-open" title={c.title} onClick={()=>{store.setView('chat');void store.loadSession(c.id);onNavigate?.();}}><span>{c.title}</span>{c.busy&&<span className="session-busy" title="正在运行">忙</span>}</button>
+                <button className="project-chat-open" title={c.title} onClick={()=>{store.setView('chat');void store.loadSession(c.id);onNavigate?.();}}><span>{c.title}</span>{c.busy&&<span className="session-busy" title="正在运行">忙</span>}{!c.busy&&c.completed&&!c.completion_seen&&<span className="session-complete" title="任务已完成，打开后标记为已读">成</span>}</button>
                 {supported && !p.archived && <button className="chat-menu-trigger" aria-label={`管理会话${c.title}`} aria-expanded={menu===c.id} onClick={()=>setMenu(menu===c.id?null:c.id)}><MoreHorizontal size={15}/></button>}
               </div>
               {!p.archived&&menu===c.id&&<div className="chat-actions">

@@ -1288,6 +1288,25 @@ def _catalog_refresh():
     project_catalog.discover(config.DATA_DIR / "sessions", config.workspace)
 
 
+def _session_task_done(session_id):
+    """Read the durable completion flag, preferring a live CEO checkpoint."""
+    ceo = _session_ceos.get(session_id)
+    if ceo is not None:
+        try:
+            with ceo._lock():
+                state = ceo._states.get(session_id, {})
+                if state.get("_task_done"):
+                    return True
+        except Exception:
+            pass
+    path = config.DATA_DIR / "sessions" / f"{session_id}.json"
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return bool((saved.get("session_state") or {}).get("_task_done"))
+
+
 @app.get("/api/projects")
 def api_projects():
     _catalog_refresh()
@@ -1296,6 +1315,8 @@ def api_projects():
     for project in projects:
         for chat in project["sessions"]:
             chat["busy"] = chat["id"] in running
+            chat["completed"] = _session_task_done(chat["id"]) and not chat["busy"]
+            chat["completion_seen"] = bool(chat.get("completion_seen"))
     return jsonify(ok=True, projects=projects)
 
 
@@ -1347,7 +1368,12 @@ def api_project_session_update(session_id):
         with _task_lock:
             if data.get("archived") is True and _session_busy(session_id):
                 return jsonify(ok=False, error="运行中的会话暂不能归档"), 409
-            item = project_catalog.update_session(session_id, data.get("title"), data.get("archived"))
+            item = project_catalog.update_session(
+                session_id,
+                data.get("title"),
+                data.get("archived"),
+                data.get("completion_seen"),
+            )
         return jsonify(ok=True, session=item)
     except (ValueError, KeyError) as exc:
         return jsonify(ok=False, error=str(exc)), 400
@@ -1857,6 +1883,8 @@ def api_sessions():
                     "msg_count": len(h),
                     "preview": preview,
                     "workspace": session_workspace(d),
+                    "completed": bool((d.get("session_state") or {}).get("_task_done")),
+                    "completion_seen": False,
                 })
             except Exception:
                 items.append({"name": f.stem, "saved_at": "?",

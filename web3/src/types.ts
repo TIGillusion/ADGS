@@ -149,7 +149,8 @@ export interface QueueItem {
 }
 
 export interface ProjectSession {
-  id: string; project_id: string; title: string; created_at: number; updated_at: number; archived?: boolean | number; busy?: boolean;
+  id: string; project_id: string; title: string; created_at: number; updated_at: number;
+  archived?: boolean | number; busy?: boolean; completed?: boolean; completion_seen?: boolean | number;
 }
 export interface ProjectItem {
   id: string; name: string; workspace: string; sessions: ProjectSession[]; created_at?: number;
@@ -255,6 +256,8 @@ export interface SessionListItem {
   saved_at: string;
   msg_count: number;
   preview: string;
+  completed?: boolean;
+  completion_seen?: boolean | number;
 }
 
 export interface SessionGraphItem {

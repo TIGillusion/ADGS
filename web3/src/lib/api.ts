@@ -101,6 +101,7 @@ export const api = {
   projectNewSession: (id: string) => req<{ok: boolean; session: import("@/types").ProjectSession}>(`/api/projects/${encodeURIComponent(id)}/sessions`,{method:"POST",body:j({})}),
   sessionRename: (id: string, title: string) => req<{ok: boolean}>(`/api/sessions/${encodeURIComponent(id)}`,{method:"PATCH",body:j({title})}),
   sessionArchive: (id: string, archived: boolean) => req<{ok: boolean}>(`/api/sessions/${encodeURIComponent(id)}`,{method:"PATCH",body:j({archived})}),
+  sessionMarkViewed: (id: string) => req<{ok: boolean}>(`/api/sessions/${encodeURIComponent(id)}`,{method:"PATCH",body:j({completion_seen:true})}),
   queueGuide: (id: string) => req<{ok: boolean; mode?: string; started?: boolean}>(`/api/queue/${encodeURIComponent(id)}/guide`,{method:"POST",body:j({})}),
 
   // ---- 任务队列（排队中的消息：查看 / 编辑 / 撤销，2026-10-22） ----

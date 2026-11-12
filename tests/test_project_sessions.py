@@ -17,6 +17,10 @@ def test_catalog_persists_project_chat_titles_and_archives_without_changing_file
     p=catalog.create_project('研究项目',str(workspace));a=catalog.create_session(p['id']);b=catalog.create_session(p['id'],'第二会话')
     assert a['id']!=b['id'] and a['workspace']==str(workspace.resolve())
     catalog.update_session(a['id'],title='新标题');catalog.update_project(p['id'],'改名项目')
+    catalog.update_session(a['id'], completion_seen=True)
+    assert catalog.session(a['id'])['completion_seen'] == 1
+    catalog.touch(a['id'], '再次开始任务')
+    assert catalog.session(a['id'])['completion_seen'] == 0
     catalog.update_session(b['id'],archived=True)
     restored=ProjectCatalog(tmp_path/'catalog.sqlite').listing()
     assert restored[0]['name']=='改名项目'
@@ -82,6 +86,30 @@ def test_project_archive_migrates_old_catalog_and_preserves_chat_archive(tmp_pat
     assert client.patch(chat_url, json={'archived': False}).status_code == 200
     assert len(client.get('/api/projects').json['projects'][0]['sessions']) == 2
     assert path.read_bytes() == original
+
+
+def test_completed_session_badge_state_is_persisted_and_readable(tmp_path, monkeypatch):
+    import json
+    import web_app as web
+
+    monkeypatch.setenv('ADGS_STATE_DIR', str(tmp_path / 'runtime'))
+    monkeypatch.setattr(config, 'DATA_DIR', tmp_path / 'data')
+    catalog = ProjectCatalog(tmp_path / 'runtime' / 'projects.sqlite')
+    monkeypatch.setattr(web, 'project_catalog', catalog)
+    monkeypatch.setattr(web, '_running_sessions', {})
+    workspace = tmp_path / 'workspace'; workspace.mkdir()
+    project = catalog.create_project('完成状态', str(workspace))
+    chat = catalog.create_session(project['id'], '已完成会话')
+    path = config.DATA_DIR / 'sessions' / f"{chat['id']}.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'session_state': {'_task_done': True}}), encoding='utf-8')
+    client = web.app.test_client()
+
+    item = client.get('/api/projects').json['projects'][0]['sessions'][0]
+    assert item['completed'] is True and item['completion_seen'] == 0
+    assert client.patch(f"/api/sessions/{chat['id']}", json={'completion_seen': True}).status_code == 200
+    item = client.get('/api/projects').json['projects'][0]['sessions'][0]
+    assert item['completed'] is True and item['completion_seen'] == 1
 
 
 def test_legacy_workspaces_group_records_and_keep_unknown_separate(tmp_path):
