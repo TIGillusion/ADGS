@@ -525,7 +525,12 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
     threads = []
     chunks = []
     output_lock = threading.Lock()
+    # ``last_progress`` records progress visible at the Hermes/session boundary
+    # such as terminal output, a new tool result, or a session message. Child
+    # process I/O is tracked separately because a stuck command can keep touching
+    # files or pipes forever without making the agent's task advance.
     last_progress = [time.monotonic()]
+    last_child_progress = [last_progress[0]]
     last_database_activity = 0
     activity_details = {}
     state_cursor = 0
@@ -748,7 +753,7 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
                         identity = (child.pid, child.create_time())
                         previous = process_samples.get(identity)
                         if previous and any(value > old for value, old in zip(sample, previous)):
-                            last_progress[0] = now
+                            last_child_progress[0] = now
                         current_samples[identity] = sample
                     process_samples = current_samples
                 except (OSError, psutil.Error):
@@ -812,9 +817,18 @@ def run_hermes(profile, instruction, model=None, cwd=None, timeout=3600,
             waiting_for_children = execution_is_waiting(execution_id)
             if waiting_for_children:
                 last_progress[0] = now
-            if not waiting_for_children and now - last_progress[0] > inactivity_timeout:
-                reason, error = "inactivity_timeout", f"No observed task activity ({inactivity_timeout}s)"
-                break
+            if not waiting_for_children:
+                idle = now - last_progress[0]
+                if idle > inactivity_timeout:
+                    child_active = now - last_child_progress[0] <= 2
+                    # A quiet, genuinely long-running child is allowed a bounded
+                    # grace period. This keeps short compute-only tools working
+                    # while preventing child I/O from masking a dead command for
+                    # an unbounded amount of time.
+                    child_grace = max(float(inactivity_timeout) * 4, 600.0)
+                    if not child_active or idle > child_grace:
+                        reason, error = "inactivity_timeout", f"No observed task activity ({inactivity_timeout}s)"
+                        break
             # Detect actual unattended startup prompts rather than spending a task timeout.
             with output_lock:
                 tail = _ANSI.sub("", "".join(chunks[-8:]))
