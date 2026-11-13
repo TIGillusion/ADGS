@@ -704,6 +704,11 @@ body {
 .project-chat-open>span:first-child { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .session-busy { flex-shrink:0; padding:1px 5px; border:1px solid color-mix(in srgb,var(--life-400) 40%,transparent); border-radius:5px; background:color-mix(in srgb,var(--life-400) 13%,transparent); color:var(--life-400); font-size:10px; font-weight:650; line-height:1.4; }
 .session-complete { flex-shrink:0; min-width:16px; padding:1px 4px; border:1px solid color-mix(in srgb,var(--success-400, #56d6a0) 42%,transparent); border-radius:5px; background:color-mix(in srgb,var(--success-400, #56d6a0) 13%,transparent); color:var(--success-400, #56d6a0); font-size:10px; font-weight:700; line-height:1.4; text-align:center; }
+.session-status { flex-shrink:0; min-width:16px; padding:1px 4px; border:1px solid color-mix(in srgb,var(--status-color,#aab4c3) 42%,transparent); border-radius:5px; background:color-mix(in srgb,var(--status-color,#aab4c3) 13%,transparent); color:var(--status-color,#aab4c3); font-size:10px; font-weight:700; line-height:1.4; text-align:center; }
+.session-status-completed { --status-color:var(--success-400,#56d6a0); }
+.session-status-blocked,.session-status-paused { --status-color:var(--warn-400,#e8b45f); }
+.session-status-failed,.session-status-exception { --status-color:var(--danger-400,#f07d8c); }
+.session-status-interrupted,.session-status-limit { --status-color:var(--muted-400,#aab4c3); }
 @keyframes spin { to {transform:rotate(360deg);} }
 .chat-menu-trigger { width:24px; height:26px; display:grid; place-items:center; color:var(--ink-500); opacity:0; }
 .project-chat:hover .chat-menu-trigger,.project-chat.selected .chat-menu-trigger,.chat-menu-trigger:focus-visible,.chat-menu-trigger[aria-expanded="true"] { opacity:1; }

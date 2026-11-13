@@ -1068,7 +1068,7 @@ class Store {
         layoutCycle: null,
         graphManual: new Map(),
       });
-      if (this.state.projectSupport && openedSession?.completed) {
+      if (this.state.projectSupport && openedSession?.terminal_status) {
         void api.sessionMarkViewed(name).then(() => {
           this.set({projects: this.state.projects.map(project => ({
             ...project,

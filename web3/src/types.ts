@@ -151,6 +151,7 @@ export interface QueueItem {
 export interface ProjectSession {
   id: string; project_id: string; title: string; created_at: number; updated_at: number;
   archived?: boolean | number; busy?: boolean; completed?: boolean; completion_seen?: boolean | number;
+  terminal_status?: "completed" | "blocked" | "failed" | "interrupted" | "exception" | "limit" | "paused" | null;
 }
 export interface ProjectItem {
   id: string; name: string; workspace: string; sessions: ProjectSession[]; created_at?: number;
@@ -258,6 +259,7 @@ export interface SessionListItem {
   preview: string;
   completed?: boolean;
   completion_seen?: boolean | number;
+  terminal_status?: ProjectSession["terminal_status"];
 }
 
 export interface SessionGraphItem {

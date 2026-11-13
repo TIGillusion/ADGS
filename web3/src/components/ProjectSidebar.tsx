@@ -4,6 +4,15 @@ import { store, useAppState } from "@/lib/store";
 import type { ViewId } from "@/types";
 
 type Editor = { kind: 'project' | 'project-name' | 'chat-name'; id?: string; name: string; workspace: string };
+const TERMINAL_BADGES = {
+  completed: ['成', '已完成'],
+  blocked: ['阻', '任务受阻'],
+  failed: ['败', '任务失败'],
+  interrupted: ['断', '任务中断'],
+  exception: ['错', '执行异常'],
+  limit: ['限', '达到决策上限'],
+  paused: ['停', '任务暂停'],
+} as const;
 export function ProjectSidebar({footer,onInspector,onNavigate}: {footer:ReactNode;onInspector:()=>void;onNavigate?:()=>void}) {
   const projects=useAppState(s=>s.projects),supported=useAppState(s=>s.projectSupport);
   const selected=useAppState(s=>s.viewSession),view=useAppState(s=>s.view),snap=useAppState(s=>s.snap);
@@ -69,7 +78,7 @@ export function ProjectSidebar({footer,onInspector,onNavigate}: {footer:ReactNod
             </div>}
             {!collapsed&&<div className="project-chats">{chats.map(c=><div key={c.id}>
               <div data-session-id={c.id} className={`project-chat ${selected===c.id?'selected':''}`}>
-                <button className="project-chat-open" title={c.title} onClick={()=>{store.setView('chat');void store.loadSession(c.id);onNavigate?.();}}><span>{c.title}</span>{c.busy&&<span className="session-busy" title="正在运行">忙</span>}{!c.busy&&c.completed&&!c.completion_seen&&<span className="session-complete" title="任务已完成，打开后标记为已读">成</span>}</button>
+                <button className="project-chat-open" title={c.title} onClick={()=>{store.setView('chat');void store.loadSession(c.id);onNavigate?.();}}><span>{c.title}</span>{c.busy&&<span className="session-busy" title="正在运行">忙</span>}{!c.busy&&c.terminal_status&&!c.completion_seen&&<span className={`session-status session-status-${c.terminal_status}`} title={`${TERMINAL_BADGES[c.terminal_status]?.[1] ?? '任务已结束'}，打开后标记为已读`}>{TERMINAL_BADGES[c.terminal_status]?.[0] ?? '结'}</span>}</button>
                 {supported && !p.archived && <button className="chat-menu-trigger" aria-label={`管理会话${c.title}`} aria-expanded={menu===c.id} onClick={()=>setMenu(menu===c.id?null:c.id)}><MoreHorizontal size={15}/></button>}
               </div>
               {!p.archived&&menu===c.id&&<div className="chat-actions">

@@ -75,6 +75,7 @@ class CEO:
         "_hermes_input_count": 0, "_hermes_input_hash": "",
         "_hermes_pending_tool_id": None, "_hermes_settled_tool_id": None, "_hermes_policy_hash": "",
         "_ceo_activity": None,
+        "_terminal_status": None,
     }
 
     def __getattr__(self, name):
@@ -393,6 +394,7 @@ class CEO:
             # complete it or authorize consumption of the next queued request.
             state["_task_done"] = False
             state["_awaiting_input"] = False
+            state["_terminal_status"] = status
         self._set_activity("interrupted", owner=name)
         bus.emit("chat.ceo_end", status=status, session=name, run_id=state.get("_run_id"),
                  reason=reason, error=reason, text=text, **details)
@@ -444,6 +446,7 @@ class CEO:
             self.history = [{"role": "system", "content": CEO_SYSTEM_PROMPT}]
             self.workflow_log = []
             self._task_done = False
+            self._terminal_status = None
             # 派发序号重置：每轮任务循环从 1 开始计数
             # （图谱 round-N 下的序号 = 该轮第几次拆分；跨轮不累计。
             #   2026-08-24 修复：此前全局递增，第二轮第一个任务显示 2）
@@ -604,6 +607,7 @@ class CEO:
     def _talk_body(self, user_input: str) -> str:
         if self._task_done or not self._run_id:
             self._run_id = uuid.uuid4().hex
+        self._terminal_status = None
         self._awaiting_input = False
         with self._lock():
             self._facts_for()["requests"].append({"text": user_input, "run_id": self._run_id})
@@ -832,6 +836,7 @@ class CEO:
                 if finish_status in {"completed", "failed"}:
                     self._settle_direct_reports(finish_status)
                 self._task_done = finish_status != "blocked"
+                self._terminal_status = finish_status
                 self._set_activity(finish_status)
                 self.history.append({
                     "role": "tool", "tool_call_id": tc["id"],

@@ -1288,23 +1288,32 @@ def _catalog_refresh():
     project_catalog.discover(config.DATA_DIR / "sessions", config.workspace)
 
 
-def _session_task_done(session_id):
-    """Read the durable completion flag, preferring a live CEO checkpoint."""
+def _session_terminal_status(session_id):
+    """Read the durable CEO terminal status, preferring a live checkpoint."""
     ceo = _session_ceos.get(session_id)
     if ceo is not None:
         try:
             with ceo._lock():
                 state = ceo._states.get(session_id, {})
-                if state.get("_task_done"):
-                    return True
+                status = state.get("_terminal_status")
+                if status:
+                    return str(status)
         except Exception:
             pass
     path = config.DATA_DIR / "sessions" / f"{session_id}.json"
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
-        return False
-    return bool((saved.get("session_state") or {}).get("_task_done"))
+        return None
+    state = saved.get("session_state") or {}
+    status = state.get("_terminal_status")
+    if status:
+        return str(status)
+    if state.get("_task_done"):
+        return "completed"
+    # Older sessions only stored the CEO activity phase.
+    phase = (state.get("_ceo_activity") or {}).get("phase")
+    return phase if phase in {"completed", "blocked", "failed", "interrupted", "exception", "limit", "paused"} else None
 
 
 @app.get("/api/projects")
@@ -1315,7 +1324,8 @@ def api_projects():
     for project in projects:
         for chat in project["sessions"]:
             chat["busy"] = chat["id"] in running
-            chat["completed"] = _session_task_done(chat["id"]) and not chat["busy"]
+            chat["terminal_status"] = _session_terminal_status(chat["id"]) if not chat["busy"] else None
+            chat["completed"] = chat["terminal_status"] == "completed"
             chat["completion_seen"] = bool(chat.get("completion_seen"))
     return jsonify(ok=True, projects=projects)
 
@@ -1883,7 +1893,8 @@ def api_sessions():
                     "msg_count": len(h),
                     "preview": preview,
                     "workspace": session_workspace(d),
-                    "completed": bool((d.get("session_state") or {}).get("_task_done")),
+                    "terminal_status": _session_terminal_status(d.get("name", f.stem)),
+                    "completed": _session_terminal_status(d.get("name", f.stem)) == "completed",
                     "completion_seen": False,
                 })
             except Exception:
