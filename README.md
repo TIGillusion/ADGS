@@ -64,7 +64,7 @@ Hermes 不随本仓库分发。ADGS 支持通过 `ADGS_HERMES_PYTHON` 指向 Her
 ### Linux / macOS
 
 ```bash
-git clone <你的仓库地址> ADGS
+git clone https://github.com/TIGillusion/ADGS.git ADGS
 cd ADGS
 
 python3 -m venv .venv
@@ -96,7 +96,7 @@ export ADGS_HERMES_PYTHON=/absolute/path/to/hermes-agent/venv/bin/python
 ### Windows PowerShell
 
 ```powershell
-git clone <你的仓库地址> ADGS
+git clone https://github.com/TIGillusion/ADGS.git ADGS
 Set-Location ADGS
 
 py -3.12 -m venv .venv

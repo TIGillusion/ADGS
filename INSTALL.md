@@ -40,7 +40,7 @@ ADGS 的 `core/terminal_runtime.py` 和 `tools/run_web3.py` 会检查显式路�
 ### Linux / macOS
 
 ```bash
-git clone <你的仓库地址> ADGS
+git clone https://github.com/TIGillusion/ADGS.git ADGS
 cd ADGS
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
@@ -50,7 +50,7 @@ python3 -m venv .venv
 ### Windows PowerShell
 
 ```powershell
-git clone <你的仓库地址> ADGS
+git clone https://github.com/TIGillusion/ADGS.git ADGS
 Set-Location ADGS
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
