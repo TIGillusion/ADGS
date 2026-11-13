@@ -17,7 +17,8 @@ export function groupLegacySessions(chats: SessionListItem[], workspaces: Record
     const auto = /^auto-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-/.exec(chat.name);
     const created = auto ? Date.parse(`${auto[1]}-${auto[2]}-${auto[3]}T${auto[4]}:${auto[5]}:${auto[6]}`) / 1000 || stamp : stamp;
     group.created_at = Math.min(group.created_at ?? created, created);
-    group.sessions.push({id:chat.name,project_id:id,title:chat.preview?.trim() || chat.name,created_at:created,updated_at:stamp});
+    group.sessions.push({id:chat.name,project_id:id,title:chat.preview?.trim() || chat.name,created_at:created,updated_at:stamp,
+      completed: chat.completed, completion_seen: chat.completion_seen, terminal_status: chat.terminal_status});
   }
   return [...groups.values()];
 }

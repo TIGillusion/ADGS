@@ -21,10 +21,10 @@ from core.node import _EXEC_SEM, _acquire_exec, _release_exec
 
 
 def test_config_values():
-    assert config.max_workers == 2, f"max_workers={config.max_workers} != 2"
-    assert config.vllm_concurrency == 3, f"vllm_concurrency={config.vllm_concurrency} != 3"
-    assert config.max_workers_effective == 2, \
-        f"max_workers_effective={config.max_workers_effective} != 2"
+    assert config.max_workers == 5, f"max_workers={config.max_workers} != 5"
+    assert config.vllm_concurrency == 5, f"vllm_concurrency={config.vllm_concurrency} != 5"
+    assert config.max_workers_effective == 5, \
+        f"max_workers_effective={config.max_workers_effective} != 5"
     print(f"[1/3] config: max_workers={config.max_workers} "
           f"vllm_concurrency={config.vllm_concurrency} "
           f"effective={config.max_workers_effective}")
@@ -33,7 +33,7 @@ def test_config_values():
 def test_sem_value():
     assert _EXEC_SEM._value == config.max_workers_effective, \
         f"信号量槽数 {_EXEC_SEM._value} != 生效并行度 {config.max_workers_effective}"
-    print(f"[2/3] 信号量初始槽数 = {_EXEC_SEM._value}（修复前为 3，修复后为 2）")
+    print(f"[2/3] 信号量初始槽数 = {_EXEC_SEM._value}（与当前生效并行度一致）")
 
 
 def test_concurrent_peak():

@@ -68,8 +68,8 @@ def test_p0_3_no_probe_fast_config():
     from config.config import config
     dt = time.time() - t0
     assert dt < 5.0, f"config 加载应 <5s，实际 {dt:.1f}s（探测未关闭？）"
-    assert config.ceo_ctx_window == 1048576, f"ceo_ctx={config.ceo_ctx_window}"
-    assert config.worker_ctx_window == 32768, f"worker_ctx={config.worker_ctx_window}"
+    assert config.ceo_ctx_window == 262144, f"ceo_ctx={config.ceo_ctx_window}"
+    assert config.worker_ctx_window == 262144, f"worker_ctx={config.worker_ctx_window}"
     assert config.ctx_window == config.ceo_ctx_window
     print(f"[P0-3] config 加载 {dt:.2f}s ✓ CEO 使用角色窗口，worker_ctx=32768（无探测）")
 

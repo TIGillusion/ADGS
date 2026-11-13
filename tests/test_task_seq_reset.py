@@ -69,13 +69,13 @@ def test_exception_path_restores_done_and_next_round_resets():
     # 任务运行中（第 3 轮第 1 个任务后 seq=1）抛出异常 → runner 处理：
     ceo._histories["test"].append({"role": "user", "content": "保留已完成成果"})
     ceo.mark_interrupted("test", "fixture interruption")
-    assert ceo._task_done is True
+    assert ceo._task_done is False
+    assert ceo._terminal_status == "exception"
     assert ceo._histories["test"][0]["content"] == "保留已完成成果"
-    # 下一条用户消息进入 talk() → 新一轮：
-    assert ceo._maybe_reset_round() is True
-    assert ceo._task_seq == 0, "异常后新轮序号应归 0（修复前残留 1）"
-    assert ceo._round_no == 4, "异常后新轮轮号应 +1（修复前残留 3）"
-    print("[3/4] 异常后恢复 _task_done=True → 下一轮序号归 0、轮号 +1 ✓")
+    # 异常任务保持未完成，后续恢复继续原轮次，不把异常误报为完成。
+    assert ceo._maybe_reset_round() is False
+    assert ceo._round_no == 3, "异常恢复不应凭空创建新轮"
+    print("[3/4] 异常后保留未完成状态与异常终态 ✓")
 
 
 def test_exception_without_fix_reproduces_drift():

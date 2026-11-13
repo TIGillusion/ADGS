@@ -326,7 +326,7 @@ def test_sanitize_before_llm_call():
 
 
 def test_explore_discipline():
-    """探索纪律（2026-08-20）：大文件拒绝、3000 字符截断、递归拒绝、超 5 次提示委派"""
+    """探索纪律：大文件拒绝、3000 字符截断、递归拒绝、达到预算后提示委派"""
     import tempfile
     from pathlib import Path
     ceo = CEO()
@@ -346,9 +346,9 @@ def test_explore_discipline():
     # 3) recursive 递归列出拒绝
     r = ceo._list_files({"path": ".", "recursive": True})
     assert "递归" in r and "委派节点" in r, f"递归应拒绝委派: {r[:60]}"
-    # 4) 探索超限：talk 循环 7 次探索，第 6/7 次工具结果带超限提示
+    # 4) 探索超限：预算为 5 次，第 5 次结果带超限提示，后续探索工具不再提供
     seq = ([{"content": "", "tool_calls": [{"id": f"c{i}", "name": "list_files",
-             "arguments": {"path": "."}}], "error": ""} for i in range(7)]
+             "arguments": {"path": "."}}], "error": ""} for i in range(5)]
            + [{"content": "", "tool_calls": [{"id": "cf", "name": "finish",
                "arguments": {"status": "blocked", "summary": "s", "workflow": "w", "artifacts": []}}], "error": ""}])
     i = {"n": 0}
@@ -360,10 +360,10 @@ def test_explore_discipline():
     ceo2.chat.call_tools = fake
     with redirect_stdout(io.StringIO()):
         ceo2.talk("测试探索纪律")
-    assert ceo2._explore_count == 7, f"应累计 7 次探索，实际 {ceo2._explore_count}"
+    assert ceo2._explore_count == 5, f"应累计 5 次探索，实际 {ceo2._explore_count}"
     hints = [m["content"] for m in ceo2.history
-             if m["role"] == "tool" and "探索已超限" in m["content"]]
-    assert len(hints) == 2, f"第 6/7 次应带超限提示，实际 {len(hints)}"
+             if m["role"] == "tool" and "探索预算已用完" in m["content"]]
+    assert len(hints) == 1, f"第 5 次应带预算提示，实际 {len(hints)}"
     print("[ok] 探索纪律：大文件拒绝 / 3000截断 / 递归拒绝 / 超5次提示委派")
 
 

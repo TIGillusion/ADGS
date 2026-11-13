@@ -98,8 +98,9 @@ def test_parallel_dispatch_count_2():
     out, events = _run_dispatch(ceo, "总任务：做两件事", subtasks, [0, 1])
     tasks = [e["data"] for e in events if e.get("type") == "graph.task"]
     assert len(tasks) == 2, f"并发应有 2 个 graph.task，实际 {len(tasks)}"
-    # 同 stage 共享序号 id，但 count 都应为 2
-    assert len({t["id"] for t in tasks}) == 1, "并发子任务应共享同一序号节点 id"
+    # 每个子任务保留独立 task id，stage_id 共享同一个序号批次节点
+    assert len({t["id"] for t in tasks}) == 2, "并发子任务应保留独立 task id"
+    assert len({t["stage_id"] for t in tasks}) == 1, "并发子任务应共享同一序号批次"
     for t in tasks:
         assert t["count"] == 2, f"并发 count 应为 2，实际 {t['count']}"
     goals = {t["goal"] for t in tasks}

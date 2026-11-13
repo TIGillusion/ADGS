@@ -499,9 +499,20 @@ class Store {
     const runStarted = ev.type === "chat.user" || ev.type === "chat.recovery_user"
       || (ev.type === "system" && ev.data?.msg === "任务已提交，CEO 开始处理…");
     const runEnded = ev.type === "system" && ev.data?.msg === "当前运行已结束";
+    const terminalStatus = (ev.type === "chat.ceo_finish" || ev.type === "chat.ceo_end")
+      ? String(ev.data?.status ?? "") : "";
+    const terminalStatuses = new Set(["completed", "blocked", "failed", "interrupted", "exception", "limit", "paused"]);
     if (s.projectSupport && ev.session && (runStarted || runEnded)) {
       this.set({ projects: s.projects.map(p => ({...p,sessions:p.sessions.map(c => c.id === ev.session ? {...c,busy:runStarted} : c)})) });
       if (runEnded) void this.refreshProjects();
+    }
+    if (s.projectSupport && ev.session && terminalStatuses.has(terminalStatus)) {
+      this.set({projects: this.state.projects.map(project => ({
+        ...project,
+        sessions: project.sessions.map(session => session.id === ev.session
+          ? {...session, terminal_status: terminalStatus as import("@/types").ProjectSession["terminal_status"], completed: terminalStatus === "completed"}
+          : session),
+      }))});
     }
     if (s.projectSupport && !ev.session && FLOW_EVENTS.has(ev.type)) return;
     // 1) 会话观测 + 隔离过滤

@@ -1376,7 +1376,8 @@ class CEO:
                         pending.remove(idx)
                         if blocked:
                             item = self._prepare_task(overall, subtasks[idx], idx, seq, stage_id,
-                                                      self._depends_context(subtasks[idx], results), route_task=False)
+                                                      self._depends_context(subtasks[idx], results), route_task=False,
+                                                      count=len(ready))
                             result = {"idx": idx, "subtask": subtasks[idx]["name"], "success": False,
                                       "outcome": "blocked", "error": f"Required predecessors not accepted: {blocked}",
                                       **{k: item[k] for k in ("task_id", "execution_id", "run_id")}}
@@ -1386,7 +1387,7 @@ class CEO:
                             results[idx] = result
                             continue
                         item = self._prepare_task(overall, subtasks[idx], idx, seq, stage_id,
-                                                  self._depends_context(subtasks[idx], results))
+                                                  self._depends_context(subtasks[idx], results), count=len(ready))
                         futures[submit_context(executor, self._execute_prepared, item)] = idx
                 if futures:
                     if not self._has_pending_guidance() and len(futures) < config.max_workers_effective and any(
@@ -1414,7 +1415,7 @@ class CEO:
         return {"stages": batches, "tasks": count,
                 "results": [results[i] for i in range(count)]}
 
-    def _prepare_task(self, overall, task, idx, seq, stage_id, background="", route_task=True):
+    def _prepare_task(self, overall, task, idx, seq, stage_id, background="", route_task=True, count=1):
         from core.registry import registry
         if not self._run_id:
             self._run_id = uuid.uuid4().hex
@@ -1444,7 +1445,7 @@ class CEO:
             self._facts_for()["tasks"][execution_id] = copy.deepcopy(item)
         bus.emit("graph.task", id=task_id, task_id=task_id, execution_id=execution_id,
                  run_id=self._run_id, stage_id=stage_id, name=task.get("name", ""),
-                 goal=task.get("goal", ""), task_md=md, overall=overall, parent="ceo", seq=seq, count=1)
+                 goal=task.get("goal", ""), task_md=md, overall=overall, parent="ceo", seq=seq, count=count)
         return {**item, "task_md": md, "name": task.get("name", ""), "node": node}
 
     def _execute_prepared(self, item):
@@ -1485,7 +1486,7 @@ class CEO:
             self._task_seq += 1
             seq = self._task_seq
         stage_id = f"t{self._round_no}_{seq}_{uuid.uuid4().hex[:8]}"
-        items = [self._prepare_task(overall, subtasks[i], i, seq, stage_id, dep_ctx.get(i, ""))
+        items = [self._prepare_task(overall, subtasks[i], i, seq, stage_id, dep_ctx.get(i, ""), count=len(stage))
                  for i in stage]
         def submit(local_idx, _results):
             result = self._execute_prepared(items[local_idx])

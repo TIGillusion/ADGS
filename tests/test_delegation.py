@@ -91,6 +91,7 @@ print("2) 通过 ✓")
 # ==================== 3) _delegate 依赖注入 + 同节点克隆 ====================
 print("\n== 3) _delegate ==")
 import core.router as router_mod
+original_route = router_mod.route
 
 injected = {}
 
@@ -144,5 +145,6 @@ assert clone_cnt == 2, f"同节点多任务应克隆2个，实际 {clone_cnt}"
 assert child_cnt == 1, f"第3个应直接 child，实际 {child_cnt}"
 assert injected.get("hit"), "依赖子任务应注入前驱结果上下文"
 print("3) 通过 ✓（依赖注入 + 同节点克隆生效）")
+router_mod.route = original_route
 
 print("\n=== 递归委派 mock 全部通过 ===")

@@ -2,8 +2,28 @@
 import argparse
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+
+
+def hermes_python(root):
+    explicit = os.environ.get('ADGS_HERMES_PYTHON')
+    if explicit:
+        return Path(explicit)
+    bundled = root / 'vendor' / 'hermes-agent' / 'venv' / ('Scripts' if os.name == 'nt' else 'bin') / ('python.exe' if os.name == 'nt' else 'python')
+    if bundled.is_file():
+        return bundled
+    executable = Path(shutil.which('hermes') or '')
+    if executable.name:
+        candidates = [
+            executable.parent / ('python.exe' if os.name == 'nt' else 'python'),
+            executable.parent.parent / 'bin' / 'python',
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+    return bundled
 
 
 def main():
@@ -15,7 +35,7 @@ def main():
     scripts = 'Scripts' if os.name == 'nt' else 'bin'
     python = 'python.exe' if os.name == 'nt' else 'python'
     backend = root / '.venv' / scripts / python
-    native = Path(os.environ.get('ADGS_HERMES_PYTHON') or root / 'vendor/hermes-agent/venv' / scripts / python)
+    native = hermes_python(root)
     required = [backend, native, native.parent.parent.parent / 'hermes_cli/main.py',
                 root / 'config/AI_config.json', root / 'web3/dist/index.html']
     missing = [str(path) for path in required if not path.is_file()]

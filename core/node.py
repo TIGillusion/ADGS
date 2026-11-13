@@ -171,6 +171,12 @@ class DynamicSemaphore:
             return {"limit": self._limit, "active_workers": self._held, "queued_workers": self._waiters,
                     "peak_active_workers": self._peak_held, "peak_queued_workers": self._peak_waiters}
 
+    @property
+    def _value(self):
+        """Compatibility view used by older integrations expecting a semaphore slot count."""
+        with self._cond:
+            return max(0, self._limit - self._held)
+
     def release(self):
         with self._cond:
             self._held = max(0, self._held - 1)
@@ -1449,7 +1455,10 @@ class NODE:
             return {"passed": False, "score": old_score, "unjudged": True,
                     "outcome": "unjudged", "detail": "部分子任务无法判断，保留已完成成果"}
         passed = all(c.get("success") for c in children)
-        raw = [float((c.get("evaluation") or {}).get("raw_score", 5 if c.get("success") else -5)) for c in children]
+        # A child that reports failure must move the parent score downward even
+        # when the child did not produce an evaluation object. Treat that case
+        # as the lowest delegation quality instead of a neutral fallback.
+        raw = [float((c.get("evaluation") or {}).get("raw_score", 5 if c.get("success") else -10)) for c in children]
         quality = max(-10.0, min(10.0, sum(raw) / len(raw)))
         return {"passed": passed, "raw_score": quality,
                 "score": max(0.0, old_score + quality * config.delta_coef),
@@ -1481,6 +1490,20 @@ class NODE:
 
     def _delegate(self, decision: dict, task_md: str, upper: str, timeout: int, depth: int) -> dict:
         from core.router import route
+        # Keep direct delegation calls safe for lightweight coordinators and
+        # recovery fixtures that do not pass through NODE.work() first.
+        if not getattr(self, "_execution_id", None):
+            self._execution_id = uuid.uuid4().hex
+        if not getattr(self, "_work_task_id", None):
+            self._work_task_id = self._execution_id
+        if not getattr(self, "_run_id", None):
+            self._run_id = uuid.uuid4().hex
+        if not hasattr(self, "_cancel"):
+            self._cancel = threading.Event()
+        if not hasattr(self, "_workspace"):
+            self._workspace = config.workspace
+        if not hasattr(self, "_deadline"):
+            self._deadline = time.monotonic() + (timeout or config.worker_timeout)
         tasks = decision.get("subtasks") or []
         validate_dependencies(tasks)
         parent_permissions = task_section(task_md, "权限告知")
@@ -1508,6 +1531,22 @@ class NODE:
         stage_ids = {}
         parent_key = f"{self.node_id}@{self._execution_id}"
         identities = [(f"task-{uuid.uuid4().hex}", uuid.uuid4().hex) for _ in tasks]
+        planned_children = {}
+        planned_counts = {}
+        # Resolve independent tasks once before the worker pool starts. This lets
+        # the coordinator detect duplicate routing targets and give every task
+        # its own Hermes session instead of serializing or overwriting one node.
+        for index, task in enumerate(tasks):
+            if task.get("depends_on"):
+                continue
+            try:
+                probe = self._render_subtask(overall, task, task_md, index, "")
+                planned = route(probe, reg=self.reg, verbose=False)
+            except Exception:
+                planned = None
+            if planned is not None:
+                planned_children[index] = planned
+                planned_counts[planned.id] = planned_counts.get(planned.id, 0) + 1
 
         def submit(index, completed):
             # The scheduler gives all concurrently admitted tasks the same completed
@@ -1519,7 +1558,9 @@ class NODE:
             if self._cancel.is_set():
                 return {"success": False, "unjudged": True, "outcome": "interrupted", "error": "上层执行已取消"}
             sub_md = self._render_subtask(overall, task, task_md, index, self._depends_context(task, completed))
-            child = route(sub_md, reg=self.reg, verbose=False)
+            child = planned_children.get(index)
+            if child is None:
+                child = route(sub_md, reg=self.reg, verbose=False)
             if child is None:
                 return {"success": False, "unjudged": True, "outcome": "blocked", "error": "无可用节点"}
             bus.emit("graph.task", id=task_id, task_id=task_id, execution_id=execution_id,
@@ -1532,10 +1573,22 @@ class NODE:
             if budget <= 0:
                 return {"success": False, "unjudged": True, "outcome": "interrupted", "error": "委派总预算耗尽"}
             try:
-                result = NODE(child.id, registry=self.reg).work(sub_md, upper=self.node_id,
-                         timeout=budget, depth=depth + 1, task_id=task_id,
-                         execution_id=execution_id, run_id=self._run_id, parent_cancel=self._cancel,
-                         workspace=self._workspace, parent_execution_id=self._execution_id)
+                # A coordinator delegates the child work through the existing
+                # child/clone entry points. It must not execute the task itself.
+                # Lightweight integrations may expose the older five-argument
+                # helper signature, so pass task_id only when supported.
+                import inspect
+                if planned_counts.get(child.id, 0) > 1 or child.id == self.node_id:
+                    invoke = self.spawn_parallel
+                    args = (self.node_id, sub_md, self.reg)
+                    kwargs = {"upper": self.node_id, "depth": depth + 1}
+                else:
+                    invoke = self._run_child
+                    args = (child.id, sub_md, depth + 1, self.node_id, budget)
+                    kwargs = {}
+                if "task_id" in inspect.signature(invoke).parameters:
+                    kwargs["task_id"] = task_id
+                result = invoke(*args, **kwargs)
             except Exception as exc:
                 result = {"success": False, "unjudged": True, "outcome": "interrupted", "error": str(exc),
                           "node_id": child.id, "profile": child.id, "execution_id": execution_id,
