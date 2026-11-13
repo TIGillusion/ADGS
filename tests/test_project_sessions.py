@@ -114,6 +114,10 @@ def test_completed_session_badge_state_is_persisted_and_readable(tmp_path, monke
     catalog.update_session(chat['id'], completion_seen=False)
     item = client.get('/api/projects').json['projects'][0]['sessions'][0]
     assert item['terminal_status'] == 'blocked' and item['completed'] is False
+    path.write_text(json.dumps({'session_state': {'_task_done': False, '_awaiting_input': True}}), encoding='utf-8')
+    catalog.update_session(chat['id'], completion_seen=False)
+    item = client.get('/api/projects').json['projects'][0]['sessions'][0]
+    assert item['terminal_status'] == 'awaiting_input'
 
 
 def test_legacy_workspaces_group_records_and_keep_unknown_separate(tmp_path):

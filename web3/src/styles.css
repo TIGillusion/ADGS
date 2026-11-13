@@ -709,6 +709,7 @@ body {
 .session-status-blocked,.session-status-paused { --status-color:var(--warn-400,#e8b45f); }
 .session-status-failed,.session-status-exception { --status-color:var(--danger-400,#f07d8c); }
 .session-status-interrupted,.session-status-limit { --status-color:var(--muted-400,#aab4c3); }
+.session-status-awaiting_input { --status-color:var(--info-400,#70a7ff); }
 @keyframes spin { to {transform:rotate(360deg);} }
 .chat-menu-trigger { width:24px; height:26px; display:grid; place-items:center; color:var(--ink-500); opacity:0; }
 .project-chat:hover .chat-menu-trigger,.project-chat.selected .chat-menu-trigger,.chat-menu-trigger:focus-visible,.chat-menu-trigger[aria-expanded="true"] { opacity:1; }

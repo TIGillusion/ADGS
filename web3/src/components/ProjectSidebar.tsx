@@ -12,6 +12,7 @@ const TERMINAL_BADGES = {
   exception: ['错', '执行异常'],
   limit: ['限', '达到决策上限'],
   paused: ['停', '任务暂停'],
+  awaiting_input: ['问', '等待用户回答'],
 } as const;
 export function ProjectSidebar({footer,onInspector,onNavigate}: {footer:ReactNode;onInspector:()=>void;onNavigate?:()=>void}) {
   const projects=useAppState(s=>s.projects),supported=useAppState(s=>s.projectSupport);

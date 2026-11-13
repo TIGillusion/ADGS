@@ -1311,9 +1311,11 @@ def _session_terminal_status(session_id):
         return str(status)
     if state.get("_task_done"):
         return "completed"
+    if state.get("_awaiting_input"):
+        return "awaiting_input"
     # Older sessions only stored the CEO activity phase.
     phase = (state.get("_ceo_activity") or {}).get("phase")
-    return phase if phase in {"completed", "blocked", "failed", "interrupted", "exception", "limit", "paused"} else None
+    return phase if phase in {"completed", "blocked", "failed", "interrupted", "exception", "limit", "paused", "awaiting_input"} else None
 
 
 @app.get("/api/projects")

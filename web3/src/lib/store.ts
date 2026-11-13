@@ -501,7 +501,7 @@ class Store {
     const runEnded = ev.type === "system" && ev.data?.msg === "当前运行已结束";
     const terminalStatus = (ev.type === "chat.ceo_finish" || ev.type === "chat.ceo_end")
       ? String(ev.data?.status ?? "") : "";
-    const terminalStatuses = new Set(["completed", "blocked", "failed", "interrupted", "exception", "limit", "paused"]);
+    const terminalStatuses = new Set(["completed", "blocked", "failed", "interrupted", "exception", "limit", "paused", "awaiting_input"]);
     if (s.projectSupport && ev.session && (runStarted || runEnded)) {
       this.set({ projects: s.projects.map(p => ({...p,sessions:p.sessions.map(c => c.id === ev.session ? {...c,busy:runStarted} : c)})) });
       if (runEnded) void this.refreshProjects();
