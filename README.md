@@ -271,7 +271,7 @@ ADGS/
 
 ## 许可证
 
-本项目采用 GNU Affero General Public License v3.0-only。完整条款见 [LICENSE](LICENSE)。Web3 前端包的许可证元数据也声明为 `AGPL-3.0-only`。
+本项目采用 GNU Affero General Public License v3.0 or later。完整条款见 [LICENSE](LICENSE)。Web3 前端包的许可证元数据也声明为 `AGPL-3.0-or-later`。
 
 ## 文档索引
 
