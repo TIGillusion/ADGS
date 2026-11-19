@@ -269,6 +269,10 @@ ADGS/
 
 本仓库在 Windows 开发环境完成后端和 Web3 前端回归验证。Linux/macOS 路径按源码和 Python 进程实现提供，目标设备仍需按实际系统安装 Hermes、Python、Node 和模型依赖。没有模型服务、Hermes 或 embedding 模型时，安装检查可以通过，但真实任务不能执行。
 
+## 许可证
+
+本项目采用 GNU Affero General Public License v3.0-only。完整条款见 [LICENSE](LICENSE)。Web3 前端包的许可证元数据也声明为 `AGPL-3.0-only`。
+
 ## 文档索引
 
 - [跨平台源码安装](INSTALL.md)
