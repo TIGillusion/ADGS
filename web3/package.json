@@ -2,6 +2,7 @@
   "name": "adgs-web3",
   "private": true,
   "version": "1.0.0",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "ADGS 智能体达尔文进化系统 — 全新 Web 前端（观测台）",
   "scripts": {
